@@ -1,0 +1,50 @@
+# === Python ===
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg
+*.egg-info/
+.Python
+venv/
+env/
+ENV/
+.venv/
+dist/
+build/
+
+# === Node ===
+node_modules/
+frontend/node_modules/
+frontend/dist/
+
+# === Database & Index ===
+*.db
+*.sqlite3
+*.faiss
+*.pkl
+
+# === Environment ===
+.env
+.env.local
+.env.*.local
+backend/.env
+
+# === IDE ===
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# === OS ===
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# === Uploads ===
+backend/uploads/*
+!backend/uploads/.gitkeep
+
+# === Temp ===
+tempCodeRunnerFile.py
