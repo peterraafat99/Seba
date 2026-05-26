@@ -1,4 +1,4 @@
-<![CDATA[<div align="center">
+<div align="center">
 
 # 🎓 Seba — AI-Powered Tutoring Platform
 
@@ -360,4 +360,4 @@ This project is licensed under the MIT License — see the [LICENSE](LICENSE) fi
 **Built with ❤️ for education**
 
 </div>
-]]>
+
