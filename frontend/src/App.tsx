@@ -12,6 +12,8 @@ import { CourseDetail } from '@/pages/CourseDetail';
 import { Lesson } from '@/pages/Lesson';
 import { Insights } from '@/pages/Insights';
 import { Admin } from '@/pages/Admin';
+import { SchoolOverview } from '@/pages/SchoolOverview';
+import { ClassroomLive } from '@/pages/ClassroomLive';
 import '@/styles/globals.css';
 
 function App() {
@@ -82,6 +84,22 @@ function App() {
               element={
                 <ProtectedRoute>
                   <Insights />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/school"
+              element={
+                <ProtectedRoute>
+                  <SchoolOverview />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/school/classroom/:id/live"
+              element={
+                <ProtectedRoute>
+                  <ClassroomLive />
                 </ProtectedRoute>
               }
             />

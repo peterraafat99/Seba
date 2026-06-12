@@ -15,12 +15,16 @@ RAG_DB_FILE = "rag_content.db"
 RAG_DB_URL = f"sqlite:///./{RAG_DB_FILE}"
 
 def build_index():
-    # Cleanup old files
-    if os.path.exists("course_index.faiss"):
-        os.remove("course_index.faiss")
-    if os.path.exists("course_meta.pkl"):
-        os.remove("course_meta.pkl")
-    print("🧹 Cleared old AI memory files.")
+    # Cleanup old files based on backend
+    backend = os.getenv("EMBEDDING_BACKEND", "local").lower()
+    index_file = "course_index_gemini.faiss" if backend == "gemini" else "course_index.faiss"
+    meta_file = "course_meta_gemini.pkl" if backend == "gemini" else "course_meta.pkl"
+
+    if os.path.exists(index_file):
+        os.remove(index_file)
+    if os.path.exists(meta_file):
+        os.remove(meta_file)
+    print(f"🧹 Cleared old AI memory files ({index_file}, {meta_file}).")
 
     # Check DB
     if not os.path.exists(RAG_DB_FILE):
@@ -31,19 +35,17 @@ def build_index():
     RagSession = sessionmaker(autocommit=False, autoflush=False, bind=rag_engine)
     db = RagSession()
     
-    # Initialize KnowledgeBase
+    # Initialize KnowledgeBase (uses local BGE-M3 embeddings — no API key needed)
     try:
-        # This will now work because load_dotenv() put the key in memory
         kb = KnowledgeBase()
     except Exception as e:
         print(f"❌ Error initializing KnowledgeBase: {e}")
-        print("💡 Check if GEMINI_API_KEY is set in your .env file.")
         return
     
-    # Splitter Config (Optimized for Gemini)
+    # Splitter Config
     splitter = RecursiveCharacterTextSplitter(
-        chunk_size=3000,      
-        chunk_overlap=500,    
+        chunk_size=3000,
+        chunk_overlap=500,
         separators=["Topic ", "\n\n", "\n", ". ", " ", ""]
     )
     
@@ -74,9 +76,15 @@ def build_index():
             })
     
     if data_to_embed:
-        print(f"🚀 Sending {len(data_to_embed)} chunks to Gemini for embedding...")
-        kb.add_lessons(data_to_embed)
-        print("✅ SUCCESS: Knowledge Base updated with Gemini-004 embeddings.")
+        backend = os.getenv("EMBEDDING_BACKEND", "local").lower()
+        if backend == "gemini":
+            print(f"🚀 Embedding {len(data_to_embed)} chunks via Google Gemini API...")
+            kb.add_lessons(data_to_embed)
+            print("✅ SUCCESS: Knowledge Base updated with Gemini Cloud embeddings.")
+        else:
+            print(f"🚀 Embedding {len(data_to_embed)} chunks locally (BGE-M3, no API needed)...")
+            kb.add_lessons(data_to_embed)
+            print("✅ SUCCESS: Knowledge Base updated with local BGE-M3 embeddings.")
     else:
         print("⚠️ No content found to index.")
 

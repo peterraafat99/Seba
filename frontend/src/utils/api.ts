@@ -475,6 +475,77 @@ class ApiClient {
     }
     return this.client.delete(`/admin/users/${userId}`);
   }
+
+  // --- School Management ---
+
+  async getSchools() {
+    if (this.isMockMode) {
+      await sleep();
+      return { data: [{ id: 1, name: 'Seba High School' }] };
+    }
+    return this.client.get('/school/');
+  }
+
+  async getGrades(schoolId: string | number) {
+    if (this.isMockMode) {
+      await sleep();
+      return { data: [{ id: 1, school_id: schoolId, name: 'Grade 10', academic_year: '2025-2026' }] };
+    }
+    return this.client.get(`/school/${schoolId}/grades`);
+  }
+
+  async getClassrooms(schoolId: string | number) {
+    if (this.isMockMode) {
+      await sleep();
+      return { data: [{ id: 1, grade_id: 1, name: '10-A Science Lab', camera_source: '0', is_exam_room: false }] };
+    }
+    return this.client.get(`/school/${schoolId}/classrooms`);
+  }
+
+  async updateClassroomConfig(classroomId: string | number, config: Record<string, any>) {
+    if (this.isMockMode) {
+      await sleep();
+      return { data: { status: 'updated', config } };
+    }
+    return this.client.patch(`/school/classrooms/${classroomId}/config`, config);
+  }
+
+  // --- CV Analytics ---
+
+  async startCvSession(classroomId: string | number, type: 'class' | 'exam' = 'class', cameraSource: string = '0') {
+    if (this.isMockMode) {
+      await sleep();
+      return { data: { success: true, session_id: 1, classroom_id: classroomId, status: 'started' } };
+    }
+    return this.client.post('/cv/session/start', {
+      classroom_id: parseInt(classroomId.toString()),
+      session_type: type,
+      camera_source: cameraSource
+    });
+  }
+
+  async stopCvSession(classroomId: string | number) {
+    if (this.isMockMode) {
+      await sleep();
+      return { data: { success: true } };
+    }
+    return this.client.post(`/cv/session/stop?classroom_id=${classroomId}`);
+  }
+
+  async enrollStudentFace(studentId: string | number, file: File) {
+    if (this.isMockMode) {
+      await sleep();
+      return { data: { success: true, student_id: studentId } };
+    }
+    const formData = new FormData();
+    formData.append('file', file);
+    formData.append('student_id', studentId.toString());
+    return this.client.post('/cv/faces/enroll', formData, {
+      headers: {
+        'Content-Type': 'multipart/form-data',
+      },
+    });
+  }
 }
 
 export const api = new ApiClient();

@@ -197,3 +197,157 @@ class StudentDetailResponse(BaseModel):
     studentSentiments: Optional[List[Dict]] = []
 
 
+# =============================================================================
+# SCHOOL MANAGEMENT SCHEMAS
+# =============================================================================
+
+class SchoolCreate(BaseModel):
+    name: str
+    address: Optional[str] = None
+    logo_url: Optional[str] = None
+
+class SchoolResponse(BaseModel):
+    id: int
+    name: str
+    address: Optional[str] = None
+    logo_url: Optional[str] = None
+    class Config:
+        from_attributes = True
+
+class GradeCreate(BaseModel):
+    name: str
+    academic_year: str
+
+class GradeResponse(BaseModel):
+    id: int
+    school_id: int
+    name: str
+    academic_year: str
+    class Config:
+        from_attributes = True
+
+class ClassroomCreate(BaseModel):
+    name: str
+    room_number: Optional[str] = None
+    capacity: Optional[int] = None
+    camera_source: Optional[str] = "0"
+    is_exam_room: bool = False
+
+class ClassroomResponse(BaseModel):
+    id: int
+    grade_id: int
+    name: str
+    room_number: Optional[str] = None
+    capacity: Optional[int] = None
+    camera_source: Optional[str] = None
+    is_exam_room: bool
+    class Config:
+        from_attributes = True
+
+class StudentRosterItem(BaseModel):
+    student_id: int
+    name: str
+    email: str
+    is_active: bool
+    has_face_profile: bool = False
+
+class ClassroomDetailResponse(BaseModel):
+    id: int
+    name: str
+    room_number: Optional[str] = None
+    is_exam_room: bool
+    students: List[StudentRosterItem] = []
+    teachers: List[Dict] = []
+    class Config:
+        from_attributes = True
+
+class AddStudentsRequest(BaseModel):
+    student_ids: List[int]
+
+class AssignTeacherRequest(BaseModel):
+    teacher_id: int
+    role: str = "subject"   # 'homeroom' | 'subject'
+    subject: Optional[str] = None
+
+class ScheduleSlotCreate(BaseModel):
+    teacher_id: int
+    subject: str
+    day_of_week: int  # 0-4
+    period_start: str # "HH:MM"
+    period_end: str   # "HH:MM"
+
+class ScheduleSlotResponse(BaseModel):
+    id: int
+    teacher_id: int
+    subject: str
+    day_of_week: int
+    period_start: str
+    period_end: str
+    class Config:
+        from_attributes = True
+
+
+# =============================================================================
+# CV SESSION SCHEMAS
+# =============================================================================
+
+class CVSessionStartRequest(BaseModel):
+    classroom_id: int
+    session_type: str = "class"  # 'class' | 'exam'
+
+class CVSessionResponse(BaseModel):
+    session_id: int
+    classroom_id: int
+    session_type: str
+    status: str
+    message: str
+
+class CVSessionSummaryResponse(BaseModel):
+    session_id: int
+    classroom_id: int
+    session_type: str
+    started_at: str
+    ended_at: Optional[str] = None
+    duration_minutes: Optional[float] = None
+    summary: Optional[Dict] = None
+
+
+# =============================================================================
+# FACE ENROLLMENT SCHEMAS
+# =============================================================================
+
+class FaceEnrollResponse(BaseModel):
+    student_id: int
+    student_name: str
+    status: str   # 'enrolled' | 'updated' | 'failed'
+    message: str
+
+class FaceProfileStatus(BaseModel):
+    student_id: int
+    has_profile: bool
+    photo_url: Optional[str] = None
+    enrolled_at: Optional[str] = None
+
+
+# =============================================================================
+# ANALYTICS SCHEMAS
+# =============================================================================
+
+class StudentAnalyticsResponse(BaseModel):
+    student_id: int
+    name: str
+    # Platform world
+    platform: Dict = {}  # courses, quiz scores, time spent, chatbot sentiments
+    # Physical world
+    physical: Dict = {}  # focus sessions, avg focus rate, distraction events
+    # Merged insight
+    engagement_score: float = 0.0
+    flags: List[str] = []  # e.g. ['low_focus_in_physics', 'high_distraction_morning']
+
+class ClassroomAnalyticsResponse(BaseModel):
+    classroom_id: int
+    classroom_name: str
+    total_sessions: int
+    avg_focus_rate: float
+    total_students: int
+    sessions: List[Dict] = []

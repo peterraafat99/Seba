@@ -2,9 +2,9 @@ import os
 import asyncio
 import re
 import aiohttp
-import google.generativeai as genai
 from sqlalchemy.orm import Session
 from dotenv import load_dotenv
+from llm_client import get_llm_client
 
 # Import models
 from models import Lesson, StudentSentiment, TeacherNote, User, Enrollment, Activity
@@ -32,14 +32,40 @@ def get_kb():
             return None
     return _kb
 
-try:
-    api_key = os.getenv("GEMINI_API_KEY")
-    if not api_key:
-        raise ValueError("GEMINI_API_KEY not found in environment variables.")
-    genai.configure(api_key=api_key)
-except Exception as e:
-    print(f"Error configuring Generative AI: {e}")
-    genai = None
+
+def unload_local_models():
+    """Unloads local embedding and emotion models to free up system RAM before calling Ollama."""
+    import gc
+    
+    # 1. Unload Knowledge Base and Embeddings
+    global _kb
+    if _kb is not None:
+        _kb.reranker = None
+        _kb = None
+    
+    import vector_store
+    vector_store._embedding_model = None
+    
+    # 2. Unload Emotion classification pipeline
+    import nlp_engine
+    nlp_engine.LOCAL_EMOTION_PIPELINE = None
+    nlp_engine.model = None
+    nlp_engine.tokenizer = None
+    
+    # 3. Trigger Python Garbage Collection
+    gc.collect()
+    
+    # 4. Clear PyTorch CPU/GPU memory caches
+    try:
+        import torch
+        torch.cuda.empty_cache()
+    except ImportError:
+        pass
+        
+    print("🧹 Unloaded local embedding and NLP models from RAM to free resources.")
+
+# LLM client is loaded lazily on first use via get_llm_client()
+# Configure LLM_BACKEND in .env: 'ollama' (local) or 'gemini' (cloud)
 
 def clean_query_for_search(query: str) -> str:
     """Clean query by removing LaTeX math notation and special characters."""
@@ -61,9 +87,9 @@ async def fetch_image_url(session, query, api_key):
     
     url = "https://serpapi.com/search"
     params = {
+        "engine": "google_images",
         "q": clean_query,
         "api_key": api_key,
-        "tbm": "isch",  # Image search
         "num": 1,
         "safe": "active"
     }
@@ -79,11 +105,11 @@ async def fetch_image_url(session, query, api_key):
                     return query, image_url
                 else:
                     print(f"⚠️ No images found for query: {clean_query}")
-            elif response.status == 403:
+            elif response.status in [401, 403]:
                 # API access denied - likely wrong key or rate limit
                 error_data = await response.json()
                 error_msg = error_data.get("error", "Unknown error")
-                print(f"❌ SerpApi Access Denied (403): {error_msg}")
+                print(f"❌ SerpApi Access Denied ({response.status}): {error_msg}")
                 print(f"   💡 Check: 1) API key is valid")
                 print(f"            2) You have remaining searches in your quota")
                 # Return a special marker to indicate API access denied
@@ -196,7 +222,7 @@ async def save_memory_background(user_id: int, user_message: str, translated_tex
         print(f"⚠️ Background Memory Error: {e}")
 
 # --- Main Chat Logic ---
-async def get_ai_response(user_message: str, lesson_id: int, user_id: int, db: Session):
+async def get_ai_response(user_message: str, lesson_id: int, user_id: int, db: Session, image_b64: str = None):
     
     clean_msg = user_message.lower().strip()
 
@@ -227,8 +253,6 @@ async def get_ai_response(user_message: str, lesson_id: int, user_id: int, db: S
             "data": quiz_data
         }
 
-    if not genai:
-        return "The AI service is not configured. Please check the API key."
 
     # --- 2. GET CURRENT LESSON CONTENT + RAG SEARCH ---
     # We get the lesson info directly from the DB
@@ -242,36 +266,30 @@ async def get_ai_response(user_message: str, lesson_id: int, user_id: int, db: S
 
     print(f"🚀 Processing message for lesson: {current_lesson_title}")
 
-    # --- 3. PARALLEL EXECUTION (Sentiment + RAG) ---
-    # NLP Task
-    task_sentiment = analyze_sentiment(user_message)
-
-    # RAG Logic - Search full library for related content
-    kb_instance = get_kb()
-    should_search_rag = (len(clean_msg) > 3) and (kb_instance is not None)
-
-    if should_search_rag:
-        # SEARCH THE FULL LIBRARY (Term 1 & Term 2) for additional context
-        task_rag = asyncio.to_thread(kb_instance.search, user_message, current_course_id, 3)
-    else:
-        async def empty_rag(): return []
-        task_rag = empty_rag()
-
-    # Execution
+    # Step 3.1: Sentiment / Translation (Calls Ollama if Arabic is present)
     try:
-        sentiment_result, rag_docs = await asyncio.gather(task_sentiment, task_rag)
+        sentiment_result = await analyze_sentiment(user_message)
     except Exception as e:
-        print(f"⚠️ Pipeline Warning: {e}")
+        print(f"⚠️ Sentiment Pipeline Warning: {e}")
         sentiment_result = {"top_emotion": "neutral", "translated_text": user_message}
-        rag_docs = []
-    
+        
     emotion = sentiment_result.get("top_emotion", "neutral")
     translated_text = sentiment_result.get("translated_text", user_message)
-    
-    print(f"✅ Processing Complete. Emotion: {emotion}, RAG Docs: {len(rag_docs)}")
 
-    # --- 4. BACKGROUND MEMORY ---
-    asyncio.create_task(save_memory_background(user_id, user_message, translated_text, emotion, db))
+    # Step 3.2: RAG Search (Loads embedding model lazily)
+    kb_instance = get_kb()
+    should_search_rag = (len(clean_msg) > 3) and (kb_instance is not None)
+    if should_search_rag:
+        try:
+            # Run in executor to prevent blocking the async loop
+            rag_docs = await asyncio.to_thread(kb_instance.search, user_message, current_course_id, 3)
+        except Exception as e:
+            print(f"⚠️ RAG Pipeline Warning: {e}")
+            rag_docs = []
+    else:
+        rag_docs = []
+        
+    print(f"✅ Processing Complete. Emotion: {emotion}, RAG Docs: {len(rag_docs)}")
 
     # --- 5. CONTEXT PREP (CURRENT LESSON + LIBRARY) ---
     # Retrieve Student Info
@@ -290,7 +308,7 @@ async def get_ai_response(user_message: str, lesson_id: int, user_id: int, db: S
             is_different_lesson = doc['title'] != current_lesson_title
             rag_context += f"--- REFERENCE: {doc['title']} {'(OUT OF CURRENT SCOPE)' if is_different_lesson else ''} ---\n{doc['text']}\n"
 
- # --- 6. PROMPT ENGINEERING (HYBRID APPROACH) ---
+    # --- 6. PROMPT ENGINEERING (HYBRID APPROACH) ---
     
     # Dynamic Instruction based on Emotion
     pedagogical_strategy = "Be encouraging and clear."
@@ -344,11 +362,35 @@ async def get_ai_response(user_message: str, lesson_id: int, user_id: int, db: S
     Answer the student now:
     """
 
-    print("🤖 Generating Final Response...")
-    model = genai.GenerativeModel('gemini-2.5-flash') 
-    response = await model.generate_content_async(final_prompt)
-    
-    # --- 6. ASYNC INTERCEPTOR (Preserved) ---
-    final_text = await inject_real_images_async(response.text)
-    
+    # --- 7. Append image instruction to prompt if image was sent ---
+    if image_b64:
+        final_prompt += """
+
+**STUDENT UPLOADED AN IMAGE:**
+The student sent a photo (likely a handwritten math problem or textbook question).
+Analyze the image carefully. Identify any mathematical expressions, equations, or
+geometric shapes in it. Then solve or explain it fully in context of the current lesson.
+If the image is unclear, describe what you can see and ask the student to clarify.
+"""
+
+    # Free up RAM before making the Ollama API call (if caching is disabled)
+    cache_local = os.getenv("CACHE_LOCAL_MODELS", "false").lower() == "true"
+    if not cache_local and os.getenv("LLM_BACKEND", "ollama").lower() == "ollama":
+        unload_local_models()
+
+    print(f"🤖 Generating response via {get_llm_client().backend_name()} ...")
+    try:
+        llm = get_llm_client()
+        response_text = await llm.generate(final_prompt, image_b64=image_b64)
+    except RuntimeError as e:
+        # Ollama offline or model not loaded — give a helpful error
+        print(f"❌ LLM error: {e}")
+        return f"⚠️ **AI Service Unavailable**: {e}"
+
+    # --- 8. ASYNC INTERCEPTOR — inject real images (unchanged) ---
+    final_text = await inject_real_images_async(response_text)
+
+    # --- 4. BACKGROUND MEMORY (Run at the very end to prevent memory overlap during LLM load) ---
+    asyncio.create_task(save_memory_background(user_id, user_message, translated_text, emotion, db))
+
     return final_text

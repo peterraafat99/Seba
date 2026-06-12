@@ -1,363 +1,174 @@
-<div align="center">
+# Seba: School Management & Real-time Classroom Analytics System
 
-# 🎓 Seba — AI-Powered Tutoring Platform
-
-**An intelligent, bilingual (English/Arabic) learning platform with an AI study assistant, personalized quizzes, and real-time student analytics.**
-
-[![Python](https://img.shields.io/badge/Python-3.12+-3776AB?logo=python&logoColor=white)](https://python.org)
-[![FastAPI](https://img.shields.io/badge/FastAPI-0.104+-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com)
-[![React](https://img.shields.io/badge/React-18-61DAFB?logo=react&logoColor=black)](https://react.dev)
-[![TypeScript](https://img.shields.io/badge/TypeScript-5.2-3178C6?logo=typescript&logoColor=white)](https://typescriptlang.org)
-[![Vite](https://img.shields.io/badge/Vite-6.4-646CFF?logo=vite&logoColor=white)](https://vitejs.dev)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-
-</div>
+Seba is a comprehensive, modern **School Management System** designed for the Egyptian National Curriculum. The Online Learning Platform is one subsystem of this ecosystem, which integrates administrative tools, student engagement portals, and a state-of-the-art **Computer Vision (CV) Real-time Proctoring and Focus Analytics engine**.
 
 ---
 
-## 📖 Overview
+## 🏛️ System Roles & Dashboard Hierarchies
 
-**Seba** is a full-stack AI tutoring platform designed for the Egyptian National Curriculum (Math — Grade 8). It combines a modern React frontend with a FastAPI backend powered by Google Gemini, RAG (Retrieval-Augmented Generation), NLP-based sentiment analysis, and FAISS vector search to deliver a personalized and emotionally-aware learning experience.
+Seba is built on a strict role-based access control (RBAC) model. The system provides custom dashboards tailored to each stakeholder in the educational lifecycle:
 
-### ✨ Key Highlights
+### 1. 👑 Super Admin (Platform Owner)
+* Platform-wide dashboard to manage multiple schools, subscriptions, and system health.
+* Oversees school creation, platform licensing, and global database migrations.
 
-- 🤖 **AI Study Assistant ("Seba")** — Gemini-powered chatbot with curriculum-grounded responses via RAG
-- 🧠 **Emotion-Aware Pedagogy** — Real-time sentiment analysis adapts teaching tone (frustrated → patient, confused → analogies)
-- 📝 **Personalized Quizzes** — AI-generated quizzes tailored to each student's progress and weak areas
-- 🌍 **Bilingual (EN/AR)** — Full RTL Arabic support with Egyptian Arabic (Masri) chatbot responses
-- 📊 **Analytics Dashboard** — Performance tracking, attendance heatmaps, and grade trends for parents & teachers
-- 🛡️ **Role-Based Access** — Student, Parent, Teacher, and Admin roles with scoped permissions
-- 📚 **PDF Curriculum Ingestion** — Automatic vectorization of curriculum PDFs into the knowledge base
-- 🎨 **Dark/Light Theme** — Smooth theme transitions with accessible color contrasts
+### 2. 🏫 School Manager (School Principal / Admin)
+* **School & Grade Management:** Creates grades (e.g., "Grade 8"), schedules academic years, and defines physical classrooms.
+* **Classroom Setup:** Configures camera sources (RTSP stream URLs or USB webcam indices) for physical classrooms.
+* **Roster Management:** Registers students, links them to classrooms, and manages teacher assignments.
+* **Timetable Scheduler:** Creates the physical class schedules (days, periods, start/end times, and subjects).
+* **Face Enrollment Auditor:** Reviews student face profiles enrolled via the system.
+
+### 3. 👩‍🏫 Teacher (Classroom & Lesson Auditor)
+* **Real-time Session Controls:** Starts/stops CV monitoring sessions for a classroom.
+* **Live Analytics Visualizer:** Monitors live student engagement rates and focus overlays via WebSockets.
+* **Behavior & Proctoring Reports:** Receives alerts for distracted states, cheating signals (during exam sessions), and unknown faces in the room.
+* **Student Analytics:** Evaluates student profile trends, platform progress, chatbot query sentiments, and custom learning notes.
+* **Manual Feedback:** Adds pedagogical comments or custom notes on student profiles.
+
+### 4. 🎓 Student (Online Learning & Tutoring Portal)
+* **Lesson Player:** Accesses bilingual lessons (Arabic/English) with course progress tracking.
+* **Seba AI Study Assistant:** Interactive chatbot tutoring right inside the lessons.
+* **Personalized Quizzes:** Takes math quizzes auto-generated to match their unique learning speed and weakness areas.
+* **Voice & Vision:** Ask questions via microphone (STT) or uploads pictures of handwritten math problems.
+
+### 5. 👪 Parent (Engagement Auditor)
+* Monitors student platform completion rates and quiz scores.
+* Reviews real-time physical classroom engagement charts (average focus rate, historical distraction events).
 
 ---
 
-## 🏗️ Architecture
+## 📹 The Computer Vision (CV) Monitoring Suite
+
+Seba monitors physical classrooms through a real-time video processing pipeline built on top of modern deep learning frameworks:
 
 ```
-┌─────────────────────────────────────────────────────┐
-│                    Frontend (React + Vite)           │
-│  ┌──────────┐ ┌──────────┐ ┌───────────┐ ┌───────┐ │
-│  │Dashboard │ │ Lessons  │ │ Insights  │ │ Admin │ │
-│  └────┬─────┘ └────┬─────┘ └─────┬─────┘ └───┬───┘ │
-│       └─────────────┴─────────────┴───────────┘     │
-│                         │ Axios                      │
-└─────────────────────────┼───────────────────────────┘
-                          │ REST API
-┌─────────────────────────┼───────────────────────────┐
-│                    Backend (FastAPI)                  │
-│  ┌──────────┐ ┌────────────┐ ┌───────────────────┐  │
-│  │ Auth &   │ │  Chatbot   │ │  Quiz Engine      │  │
-│  │ Sessions │ │ (Gemini)   │ │ (AI-Generated)    │  │
-│  └──────────┘ └──────┬─────┘ └───────────────────┘  │
-│                      │                               │
-│  ┌──────────┐ ┌──────┴─────┐ ┌───────────────────┐  │
-│  │ NLP      │ │ RAG /      │ │ Admin Panel       │  │
-│  │ Engine   │ │ VectorStore│ │ (CRUD)            │  │
-│  └──────────┘ └──────┬─────┘ └───────────────────┘  │
-│                      │                               │
-│  ┌───────────────────┴───────────────────────────┐  │
-│  │             SQLite + FAISS Index              │  │
-│  └───────────────────────────────────────────────┘  │
-└─────────────────────────────────────────────────────┘
+[Camera Stream] 
+       │
+       ▼
+[YOLOv8/11 Face Detector] ──► [InsightFace Recognition] ──► Matches 512-dim ArcFace Vectors
+       │
+       ▼
+[ByteTrack Multi-Object Tracker] ──► Mapped to Student ID
+       │
+       ▼
+[MediaPipe Face Mesh] ──► OpenCV solvePnP ──► Calculates Pitch, Yaw, Roll
+       │
+       ▼
+[Focus State Machine (FSM)] ──► Emits Focus/Distraction/Cheating Signals
+       │
+       ▼
+[WebSocket Broadcaster] ──► Live React Canvas Overlay
 ```
 
----
-
-## 🚀 Features
-
-### For Students
-| Feature | Description |
-|---------|-------------|
-| 📚 Course Browser | Browse and enroll in curriculum-aligned courses |
-| 🎬 Video Lessons | Embedded video player with progress tracking |
-| 🤖 AI Chat | Ask "Seba" questions — get curriculum-grounded answers with LaTeX math rendering |
-| 🧩 Smart Quizzes | AI-generated quizzes personalized to your weak areas |
-| 🌙 Dark Mode | Eye-friendly dark theme with smooth toggle |
-| 🌐 Arabic Support | Full RTL layout with Egyptian Arabic chatbot responses |
-
-### For Parents & Teachers
-| Feature | Description |
-|---------|-------------|
-| 📊 Student Analytics | Performance trends, grade breakdowns, and time-spent reports |
-| 📅 Attendance Heatmap | Visual 30-day activity tracker |
-| 💬 Teacher Notes | Automatic AI-generated learning insights per student |
-| 😊 Sentiment Tracking | Monitors student emotional state during chat sessions |
-| 📝 Comments | Add notes and observations per student |
-
-### For Admins
-| Feature | Description |
-|---------|-------------|
-| 🏫 Course Management | Full CRUD for courses, lessons, and quizzes |
-| 👥 User Management | Create, edit, soft-delete users; link parents ↔ students |
-| 📄 PDF Ingestion | Upload curriculum PDFs → automatic vectorization into knowledge base |
-| ⚙️ System Dashboard | Overview of platform statistics |
+### Core Components
+* **Face Profile Enrollment:** Generates 512-dimensional ArcFace embeddings from student photos and stores them as base64-encoded strings in the SQLite database.
+* **Supervision ByteTrack Tracker:** Maps active bounding boxes dynamically to prevent ID switching or recognition lag on intermediate frames.
+* **Head Pose Estimator:** MediaPipe Face Mesh tracks key 3D facial landmarks. An OpenCV `solvePnP` solver computes the Euler angles (**Pitch, Yaw, Roll**) in degrees:
+  * **Pitch < -20°:** Looking down (likely at a phone, desk, or cheating sheet).
+  * **Yaw > 25° or < -25°:** Head turned lateral (looking away from board/screen).
+* **Focus Finite State Machine (FSM):**
+  * **Classroom Mode:** Calculates continuous distraction. If a student is distracted (pitch/yaw out of bounds) for **>10 seconds**, a `distracted` event is logged and streamed.
+  * **Exam Proctoring Mode:** Activates stricter rules:
+    * **Distraction Timer:** Reduced to **3 seconds**.
+    * **Neighbor Glance:** Triggers a `neighbor_glance` flag if the student looks laterally toward an adjacent desk for more than a brief second.
+    * **Rapid Scan:** Tracks direction reversals. If a student shifts head direction (Left-Right-Left) **>3 times inside a 5-second window**, a `rapid_scan` cheating flag is logged.
 
 ---
 
-## 🛠️ Tech Stack
+## ⚙️ Model Toggling: Local Offline vs. Cloud API
 
-### Backend
-| Technology | Purpose |
-|-----------|---------|
-| **FastAPI** | REST API framework |
-| **SQLAlchemy** | ORM + database models |
-| **SQLite** | Persistent storage |
-| **Google Gemini** | LLM for AI chatbot & quiz generation |
-| **FAISS** | Vector similarity search for RAG |
-| **Sentence Transformers** | Text embedding for knowledge base |
-| **spaCy** | NLP processing |
-| **PyMuPDF** | PDF parsing for curriculum ingestion |
-| **LangChain** | Text splitting for document chunking |
+Seba is designed to work in hardware-constrained environments (e.g., 16 GB RAM laptops). You can switch between a **100% offline local setup** and a **zero-local-RAM cloud setup** simply by toggling environment variables.
 
-### Frontend
-| Technology | Purpose |
-|-----------|---------|
-| **React 18** | UI framework |
-| **TypeScript** | Type-safe development |
-| **Vite** | Build tool & dev server |
-| **Tailwind CSS** | Utility-first styling |
-| **Recharts** | Data visualization charts |
-| **Framer Motion** | Animations & transitions |
-| **React Player** | Video playback |
-| **KaTeX** | LaTeX math rendering |
-| **Mermaid** | Diagram rendering |
-| **Lucide React** | Icon library |
+### 🔌 How to Switch Backends in `.env`
 
----
+Open [`backend/.env`](file:///d:/grad%203/Seba%20AI%20tutor/Seba%20AI%20tutor/backend/.env) to configure your preference:
 
-## ⚡ Quick Start
+#### Option A: 100% Local Offline Mode (GPU + CPU)
+* **LLM Engine:** Local Qwen 3.5 9B running on your GPU via Ollama.
+* **Embeddings & Reranker:** BGE-M3 and Cross-Encoder running locally on your CPU.
+* **Pros:** 100% private, free, works without internet.
+* **Cons:** High CPU/GPU load. Requires model downloads.
+* **Configuration:**
+  ```env
+  LLM_BACKEND=ollama
+  OLLAMA_MODEL=qwen3.5:9b
+  OLLAMA_HOST=http://localhost:11434
+  EMBEDDING_BACKEND=local
+  EMBEDDING_MODEL=./bge_m3_local
+  CACHE_LOCAL_MODELS=false
+  ```
 
-### Prerequisites
-
-- **Python 3.12+**
-- **Node.js 18+** & npm
-- **Google Gemini API Key** ([Get one here](https://aistudio.google.com/apikey))
-
-### 1. Clone the Repository
-
-```bash
-git clone https://github.com/peterraafat99/seba.git
-cd seba
-```
-
-### 2. Backend Setup
-
-```bash
-cd backend
-
-# Create and activate a virtual environment
-python -m venv venv
-venv\Scripts\activate        # Windows
-# source venv/bin/activate   # macOS/Linux
-
-# Install dependencies
-pip install -r requirements.txt
-
-# Create .env file
-echo GEMINI_API_KEY=your_api_key_here > .env
-
-# Initialize the database with sample data
-python init_db.py
-
-# Start the server
-python main.py
-```
-
-The API will be available at `http://localhost:3000`
-
-> **API Docs:** Visit `http://localhost:3000/docs` for Swagger UI
-
-### 3. Frontend Setup
-
-```bash
-cd frontend
-
-# Install dependencies
-npm install
-
-# Create .env file (if not present)
-echo VITE_API_BASE_URL=http://localhost:3000/api > .env
-
-# Start the dev server
-npm run dev
-```
-
-The app will be available at `http://localhost:5173`
-
-### 4. Default Credentials
-
-| Role | Email | Password |
-|------|-------|----------|
-| Admin | `admin@example.com` | `admin123` |
-| Student | `student@example.com` | `student123` |
+#### Option B: Cloud API Mode (0 MB Local RAM / VRAM)
+* **LLM Engine:** Gemini 2.5 Flash API on Google Cloud.
+* **Embeddings:** Gemini Embedding API (`models/gemini-embedding-001`).
+* **Pros:** Instant response, zero load on your CPU/GPU, leaves 100% of RAM free for other applications.
+* **Cons:** Requires internet access and API keys.
+* **Configuration:**
+  ```env
+  LLM_BACKEND=gemini
+  CLOUD_MODEL=gemini-2.5-flash
+  EMBEDDING_BACKEND=gemini
+  GEMINI_API_KEY=your_google_ai_studio_api_key
+  ```
 
 ---
 
-## 📁 Project Structure
+## 🧠 Local Memory Optimization Scheme (For 16GB Laptops)
 
-```
-seba/
-├── backend/
-│   ├── main.py                # FastAPI app & all API routes
-│   ├── models.py              # SQLAlchemy database models
-│   ├── schemas.py             # Pydantic request/response schemas
-│   ├── auth.py                # JWT authentication logic
-│   ├── chatbot.py             # Gemini-powered AI chatbot with RAG
-│   ├── quiz_engine.py         # Personalized quiz generation
-│   ├── nlp_engine.py          # Sentiment analysis & insight extraction
-│   ├── vector_store.py        # FAISS vector store for RAG retrieval
-│   ├── build_rag.py           # Build/rebuild the FAISS index
-│   ├── ingest_pdfs.py         # PDF curriculum ingestion pipeline
-│   ├── admin.py               # Admin panel routes (CRUD)
-│   ├── database.py            # Database connection setup
-│   ├── init_db.py             # Database seeder with sample data
-│   ├── translate_content.py   # Content translation utilities
-│   ├── requirements.txt       # Python dependencies
-│   └── curriculum_pdfs/       # Uploaded curriculum PDFs
-│
-├── frontend/
-│   ├── src/
-│   │   ├── App.tsx            # Main app with routing
-│   │   ├── main.tsx           # Entry point
-│   │   ├── pages/             # Page components
-│   │   │   ├── Home.tsx       # Landing page
-│   │   │   ├── Login.tsx      # Authentication
-│   │   │   ├── Register.tsx   # Registration
-│   │   │   ├── Dashboard.tsx  # Student/Parent/Teacher dashboard
-│   │   │   ├── Courses.tsx    # Course browser
-│   │   │   ├── CourseDetail.tsx
-│   │   │   ├── Lesson.tsx     # Lesson viewer + AI chat + quiz
-│   │   │   ├── Insights.tsx   # Analytics dashboard
-│   │   │   └── Admin.tsx      # Admin panel
-│   │   ├── components/        # Reusable UI components
-│   │   ├── contexts/          # React contexts (Theme, Language)
-│   │   ├── styles/            # Global CSS & design tokens
-│   │   └── utils/             # API client, helpers
-│   ├── package.json
-│   ├── vite.config.ts
-│   ├── tailwind.config.js
-│   └── tsconfig.json
-│
-└── README.md
-```
+When running **Option A (Local Offline)** on 16GB laptops, system memory bottlenecks can cause Ollama to crash when loading a 9B model. We solved this with a **sequential lifecycle cleanup scheme** inside [chatbot.py](file:///d:/grad%203/Seba%20AI%20tutor/Seba%20AI%20tutor/backend/chatbot.py):
+
+1. **Step-by-Step Execution:** We do not run the RAG search, emotion classification, and LLM calls in parallel. 
+2. **Device Isolation:** Local BGE-M3 and emotion classifiers are forced onto `device="cpu"` to keep your GPU VRAM 100% free for Ollama.
+3. **RAM Eviction (`unload_local_models`):** 
+   Right before the backend sends the prompt to Ollama, it frees the references to local BGE-M3, the CrossEncoder, and the emotion pipeline, and calls `gc.collect()` and `torch.cuda.empty_cache()`. 
+   This releases **3+ GB of system RAM**, giving Ollama the contiguous memory space it needs to launch the 9B model on the GPU.
+4. **Caching Switch (`CACHE_LOCAL_MODELS`):**
+   * If you have a **32 GB RAM laptop** (like your friend's), set `CACHE_LOCAL_MODELS=true`. The system will skip unloading, keeping all models in RAM for instant, lag-free consecutive responses.
+   * If you have a **16 GB RAM laptop**, keep `CACHE_LOCAL_MODELS=false` to protect your system from allocation crashes.
 
 ---
 
-## 🔑 API Endpoints
+## 🚀 Installation & Running
 
-<details>
-<summary><b>Authentication</b></summary>
+### 1. Backend Setup & Ingestion
+1. Navigate to the backend folder:
+   ```bash
+   cd backend
+   ```
+2. Install Python packages:
+   ```bash
+   pip install -r requirements.txt
+   ```
+3. Place your math curriculum PDFs in `backend/curriculum_pdfs/Math/term_1/` and `term_2/`.
+4. Ingest and extract text from the PDFs:
+   ```bash
+   python ingest_pdfs.py
+   ```
+5. Build the vector database index (this script automatically creates `course_index.faiss` or `course_index_gemini.faiss` depending on your `.env` setting):
+   ```bash
+   $env:PYTHONIOENCODING="utf-8"; python build_rag.py
+   ```
+6. Populate the platform database tables with initial course schedules, sample users, and lessons:
+   ```bash
+   python init_db.py
+   ```
+7. Launch the FastAPI server:
+   ```bash
+   python main.py
+   ```
 
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| POST | `/api/auth/register` | Register a new user |
-| POST | `/api/auth/login` | Login & get JWT token |
-| POST | `/api/auth/logout` | Logout |
-
-</details>
-
-<details>
-<summary><b>Dashboard & Courses</b></summary>
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/api/dashboard` | Get role-specific dashboard data |
-| GET | `/api/courses` | List all courses |
-| GET | `/api/courses/:id` | Get course details with lessons |
-| POST | `/api/courses/:id/enroll` | Enroll in a course |
-
-</details>
-
-<details>
-<summary><b>Lessons & Chat</b></summary>
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/api/lessons/:id` | Get lesson content, video, quiz |
-| POST | `/api/lessons/:id/track-time` | Track time spent on lesson |
-| POST | `/api/chat` | Send message to AI tutor |
-
-</details>
-
-<details>
-<summary><b>Quizzes</b></summary>
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| POST | `/api/quiz/submit` | Submit quiz answers |
-| POST | `/api/quiz/generate` | Generate AI-personalized quiz |
-| POST | `/api/quiz/request` | Request a quiz for a lesson |
-
-</details>
-
-<details>
-<summary><b>Insights & Analytics</b></summary>
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/api/insights/students` | List all students with stats |
-| GET | `/api/insights/student/:id` | Detailed student analytics |
-| GET | `/api/notes/student/:id` | Get AI-generated teacher notes |
-| POST | `/api/insights/comment` | Add teacher comment |
-
-</details>
-
-<details>
-<summary><b>Admin</b></summary>
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/api/admin/courses` | List all courses |
-| POST | `/api/admin/courses` | Create course |
-| PUT | `/api/admin/courses/:id` | Update course |
-| DELETE | `/api/admin/courses/:id` | Delete course |
-| POST | `/api/admin/lessons` | Create lesson |
-| GET | `/api/admin/users` | List users by role |
-| POST | `/api/admin/link-parent` | Link parent ↔ students |
-
-</details>
-
----
-
-## 🧠 AI Architecture
-
-### RAG Pipeline
-1. **Ingestion** — Curriculum PDFs are parsed (PyMuPDF), chunked (LangChain), and embedded (Sentence Transformers)
-2. **Indexing** — Embeddings are stored in a FAISS vector index for fast similarity search
-3. **Retrieval** — Student questions trigger a hybrid search (vector + BM25) across the knowledge base
-4. **Generation** — Retrieved context + lesson content are fed to Gemini with pedagogical prompts
-
-### Emotion-Aware Pedagogy
-- Student messages are analyzed for sentiment (frustration, confusion, excitement, etc.)
-- The chatbot adapts its teaching strategy based on detected emotions
-- Learning insights are automatically extracted and saved as teacher notes
-
-### Personalized Quiz Generation
-- Quizzes are generated by Gemini based on lesson content and student history
-- Weak areas are identified from past quiz scores and adapted accordingly
-
----
-
-## 🤝 Contributing
-
-1. Fork the repository
-2. Create your feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
-
----
-
-## 📄 License
-
-This project is licensed under the MIT License — see the [LICENSE](LICENSE) file for details.
-
----
-
-<div align="center">
-
-**Built with ❤️ for education**
-
-</div>
-
+### 2. Frontend Setup
+1. Navigate to the frontend folder:
+   ```bash
+   cd ../frontend
+   ```
+2. Install Node dependencies:
+   ```bash
+   npm install
+   ```
+3. Start the React/Vite development server:
+   ```bash
+   npm run dev
+   ```
+4. Access the portal in your browser at `http://localhost:5173`.

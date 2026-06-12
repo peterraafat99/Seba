@@ -1,18 +1,12 @@
 import os
+import re
 import json
-import google.generativeai as genai
 from sqlalchemy.orm import Session
 from sqlalchemy import desc
+from llm_client import get_llm_client
 
 # Import your models
 from models import User, Lesson, Course, StudentSentiment
-
-# Configure Gemini
-api_key = os.getenv("GEMINI_API_KEY")
-genai.configure(api_key=api_key)
-
-def get_model():
-    return genai.GenerativeModel('gemini-2.5-flash')
 
 async def generate_personalized_quiz(user_id: int, db: Session, target_lesson_id: int):
     """
@@ -48,7 +42,7 @@ async def generate_personalized_quiz(user_id: int, db: Session, target_lesson_id
             for p in past_lessons
         ])
 
-    print(f"🧠 Quiz Engine: Generating quiz for {student_name} on {current_lesson.title} + Review...")
+    print(f"[Quiz] Generating quiz for {student_name} on {current_lesson.title} + Review...")
 
     # --- 2. DETECT EMOTION (The Sentiment Part) ---
     # Fetch the last sentiment record
@@ -110,17 +104,25 @@ async def generate_personalized_quiz(user_id: int, db: Session, target_lesson_id
 
     # --- 4. GENERATE & RETURN ---
     try:
-        model = get_model()
-        response = await model.generate_content_async(
-            prompt,
-            generation_config={"response_mime_type": "application/json"}
-        )
-        
-        return json.loads(response.text)
+        llm = get_llm_client()
+        # Add explicit JSON instruction since local models don't support mime type enforcement
+        json_prompt = prompt + """
+
+IMPORTANT: Return ONLY the raw JSON object. Do not wrap it in markdown code fences.
+Do not add any explanation before or after the JSON."""
+
+        response_text = await llm.generate(json_prompt)
+
+        # Extract JSON — handle cases where model wraps in ```json ... ```
+        json_match = re.search(r'\{.*\}', response_text, re.DOTALL)
+        if not json_match:
+            raise ValueError("No JSON object found in model response.")
+
+        return json.loads(json_match.group())
 
     except Exception as e:
-        print(f"❌ Quiz Generation Error: {e}")
+        print(f"[Quiz] Generation Error: {e}")
         return {
-            "error": True, 
+            "error": True,
             "message": "AI failed to generate quiz. Please try again."
         }

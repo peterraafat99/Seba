@@ -21,11 +21,16 @@ from auth import get_current_user, create_access_token, verify_password, get_pas
 from admin import admin_router
 from chatbot import get_ai_response 
 from quiz_engine import generate_personalized_quiz
+# ---- New School Platform Routers ----
+from routers.school_router import router as school_router
+from routers.cv_router import router as cv_router
+from routers.analytics_router import router as analytics_router
+from cv_analytics.session_manager import session_manager
 
 # Create database tables
 Base.metadata.create_all(bind=engine)
 
-app = FastAPI(title="Learning Platform API", version="1.0.0")
+app = FastAPI(title="School Analytics Platform API", version="2.0.0")
 
 # CORS middleware
 app.add_middleware(
@@ -37,6 +42,11 @@ app.add_middleware(
     expose_headers=["*"],
 )
 
+# Graceful shutdown: stop all active CV sessions when server exits
+@app.on_event("shutdown")
+async def on_shutdown():
+    session_manager.stop_all()
+
 # Create uploads directory if it doesn't exist
 UPLOAD_DIR = "uploads"
 os.makedirs(UPLOAD_DIR, exist_ok=True)
@@ -44,8 +54,16 @@ os.makedirs(UPLOAD_DIR, exist_ok=True)
 # Mount static files for serving uploaded images
 app.mount("/uploads", StaticFiles(directory=UPLOAD_DIR), name="uploads")
 
-# Include admin router
+# Include admin router (legacy)
 app.include_router(admin_router, prefix="/api/admin", tags=["admin"])
+
+# ---- School Platform Routers ----
+app.include_router(school_router, prefix="/api/school", tags=["school"])
+app.include_router(cv_router, prefix="/api/cv", tags=["cv-analytics"])
+app.include_router(analytics_router, prefix="/api/analytics", tags=["analytics"])
+
+# WebSocket endpoint for CV streaming is registered directly on the cv_router
+# Connect via: ws://localhost:8000/api/cv/ws/{classroom_id}
 
 # OAuth2 scheme
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/token")
@@ -540,6 +558,203 @@ async def chat(message: ChatMessage, current_user: User = Depends(get_current_us
     except Exception as e:
         print(f"Chat Error: {e}")
         raise HTTPException(status_code=503, detail="AI Service unavailable")
+
+
+# ==========================================
+# MULTIMODAL CHAT ENDPOINTS
+# ==========================================
+
+@app.post("/api/chat/image")
+async def chat_with_image(
+    message: str = Form(default="What is this?"),
+    lesson_id: int = Form(...),
+    image: UploadFile = File(...),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Accept a text message + image upload (handwritten math, textbook photo, etc.)
+    The image is base64-encoded and passed to the vision LLM alongside the text prompt.
+    Supports: jpg, jpeg, png, gif, webp
+    """
+    # Validate file type
+    allowed_types = {"image/jpeg", "image/jpg", "image/png", "image/gif", "image/webp"}
+    if image.content_type not in allowed_types:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported image type: {image.content_type}. Use jpg, png, gif, or webp."
+        )
+
+    try:
+        import base64
+        image_bytes = await image.read()
+        image_b64 = base64.b64encode(image_bytes).decode("utf-8")
+
+        print(f"[Image] Received {image.filename} ({len(image_bytes) // 1024} KB) from user {current_user.id}")
+
+        ai_message = await get_ai_response(
+            user_message=message,
+            lesson_id=lesson_id,
+            user_id=current_user.id,
+            db=db,
+            image_b64=image_b64
+        )
+
+        if isinstance(ai_message, dict):
+            return ai_message
+
+        return ChatResponse(message=ai_message)
+
+    except Exception as e:
+        print(f"[Image] Chat error: {e}")
+        raise HTTPException(status_code=503, detail="AI vision service unavailable")
+
+
+@app.post("/api/chat/voice")
+async def chat_with_voice(
+    lesson_id: int = Form(...),
+    audio: UploadFile = File(...),
+    respond_with_voice: bool = Form(default=False),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Accept an audio file, transcribe it via Groq Whisper, then get an AI response.
+    Optionally synthesize the response back to speech.
+
+    Flow: audio -> Groq Whisper STT -> text -> get_ai_response -> (optional TTS) -> response
+    Supports: webm, mp3, wav, m4a, ogg, flac
+    """
+    from voice_handler import transcribe_audio, synthesize_speech
+    import base64
+
+    try:
+        audio_bytes = await audio.read()
+        print(f"[Voice] Received {audio.filename} ({len(audio_bytes) // 1024} KB) from user {current_user.id}")
+
+        # Step 1: Transcribe audio via Groq Whisper API
+        transcription = await transcribe_audio(audio_bytes, filename=audio.filename or "audio.webm")
+
+        if not transcription["success"]:
+            raise HTTPException(
+                status_code=503,
+                detail=f"Transcription failed: {transcription['error']}"
+            )
+
+        text = transcription["text"]
+        language = transcription["language"]
+
+        if not text.strip():
+            raise HTTPException(status_code=400, detail="Could not detect any speech in audio.")
+
+        print(f"[Voice] Transcribed ({language}): {text[:100]}")
+
+        # Step 2: Get AI response (same pipeline as text chat)
+        ai_message = await get_ai_response(
+            user_message=text,
+            lesson_id=lesson_id,
+            user_id=current_user.id,
+            db=db
+        )
+
+        if isinstance(ai_message, dict):
+            # Quiz widget or special response — just return with transcription appended
+            ai_message["transcribed_text"] = text
+            return ai_message
+
+        response_payload = {
+            "message": ai_message,
+            "transcribed_text": text,
+            "detected_language": language,
+            "type": "voice_response"
+        }
+
+        # Step 3: Optional TTS — synthesize AI reply to audio
+        if respond_with_voice:
+            audio_bytes_out = await synthesize_speech(ai_message, language=language)
+            if audio_bytes_out:
+                response_payload["audio_base64"] = base64.b64encode(audio_bytes_out).decode("utf-8")
+                response_payload["audio_format"] = "wav"
+
+        return response_payload
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"[Voice] Chat error: {e}")
+        raise HTTPException(status_code=503, detail="Voice service unavailable")
+
+
+@app.post("/api/chat/multimodal")
+async def chat_multimodal(
+    message: str = Form(default=""),
+    lesson_id: int = Form(...),
+    image: UploadFile = File(default=None),
+    audio: UploadFile = File(default=None),
+    respond_with_voice: bool = Form(default=False),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    The fully combined endpoint — supports any combination of:
+      - Text only
+      - Text + Image (handwritten math)
+      - Voice only (auto-transcribed)
+      - Voice + Image (most powerful mode)
+
+    At least one of: message, image, or audio must be provided.
+    """
+    from voice_handler import transcribe_audio, synthesize_speech
+    import base64
+
+    final_text = message.strip()
+    image_b64 = None
+    detected_language = "en"
+
+    # Step 1: Transcribe audio if provided
+    if audio and audio.filename:
+        audio_bytes = await audio.read()
+        transcription = await transcribe_audio(audio_bytes, filename=audio.filename)
+        if transcription["success"] and transcription["text"].strip():
+            # Prepend voice transcription to any typed text
+            final_text = (transcription["text"] + " " + final_text).strip()
+            detected_language = transcription["language"]
+
+    # Step 2: Encode image if provided
+    if image and image.filename:
+        image_bytes = await image.read()
+        image_b64 = base64.b64encode(image_bytes).decode("utf-8")
+
+    if not final_text and not image_b64:
+        raise HTTPException(status_code=400, detail="Please provide a message, image, or audio.")
+
+    # Step 3: Get AI response
+    ai_message = await get_ai_response(
+        user_message=final_text or "Please analyze the attached image.",
+        lesson_id=lesson_id,
+        user_id=current_user.id,
+        db=db,
+        image_b64=image_b64
+    )
+
+    if isinstance(ai_message, dict):
+        return ai_message
+
+    response_payload = {
+        "message": ai_message,
+        "type": "multimodal_response",
+        "detected_language": detected_language
+    }
+
+    # Step 4: Optional TTS
+    if respond_with_voice:
+        audio_out = await synthesize_speech(ai_message, language=detected_language)
+        if audio_out:
+            response_payload["audio_base64"] = base64.b64encode(audio_out).decode("utf-8")
+            response_payload["audio_format"] = "wav"
+
+    return response_payload
+
 
 # ==========================================
 # 6. QUIZ (FIXED)
