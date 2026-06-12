@@ -43,34 +43,54 @@ Seba is built on a strict role-based access control (RBAC) model. The system pro
 Seba monitors physical classrooms through a real-time video processing pipeline built on top of modern deep learning frameworks:
 
 ```
-[Camera Stream] 
-       │
-       ▼
-[YOLOv8/11 Face Detector] ──► [InsightFace Recognition] ──► Matches 512-dim ArcFace Vectors
-       │
-       ▼
-[ByteTrack Multi-Object Tracker] ──► Mapped to Student ID
-       │
-       ▼
-[MediaPipe Face Mesh] ──► OpenCV solvePnP ──► Calculates Pitch, Yaw, Roll
-       │
-       ▼
-[Focus State Machine (FSM)] ──► Emits Focus/Distraction/Cheating Signals
-       │
-       ▼
-[WebSocket Broadcaster] ──► Live React Canvas Overlay
+                  [Camera Stream]
+                         │
+                         ▼
+        ┌────────────────────────────────┐
+        │     Face Detector Backend      │
+        │  (Configured in config.py)     │
+        └──────────────┬─────────────────┘
+                       │
+             ┌─────────┴─────────┐
+             ▼                   ▼
+     [RetinaFace DEFAULT]   [YOLOv11 OPTIONAL] (yolov11n-face.pt)
+     (InsightFace det_10g)       │
+             │                   │
+             ▼                   ▼
+       ┌───────────────────────────────┐
+       │   InsightFace Recognition     │  (Anchor Frames only)
+       │  (ArcFace w600k_r50 Vector)   │ ──► Matches 512-dim FAISS index
+       └──────────────┬────────────────┘
+                      │
+                      ▼
+       ┌───────────────────────────────┐
+       │ Supervision ByteTrack Tracker │ ──► Maintains locked Student ID
+       └──────────────┬────────────────┘
+                      │
+                      ▼
+       ┌───────────────────────────────┐
+       │      Head Pose Estimator      │ ──► 2D Landmark Ratios (Stable)
+       └──────────────┬────────────────┘
+                      │
+                      ▼
+       ┌───────────────────────────────┐
+       │   Focus State Machine (FSM)   │ ──► Focus/Distraction/Cheating Signals
+       └──────────────┬────────────────┘
+                      │
+                      ▼
+       ┌───────────────────────────────┐
+       │     WebSocket Broadcaster     │ ──► Live React Canvas Overlay
+       └───────────────────────────────┘
 ```
 
 ### Core Components
 * **Face Profile Enrollment:** Generates 512-dimensional ArcFace embeddings from student photos and stores them as base64-encoded strings in the SQLite database.
 * **Supervision ByteTrack Tracker:** Maps active bounding boxes dynamically to prevent ID switching or recognition lag on intermediate frames.
-* **Head Pose Estimator:** MediaPipe Face Mesh tracks key 3D facial landmarks. An OpenCV `solvePnP` solver computes the Euler angles (**Pitch, Yaw, Roll**) in degrees:
-  * **Pitch < -20°:** Looking down (likely at a phone, desk, or cheating sheet).
-  * **Yaw > 25° or < -25°:** Head turned lateral (looking away from board/screen).
+* **Head Pose Estimator:** Replaced heavy gaze networks with an optimized **2D Landmark Ratio Method** mapping distances between 5 keypoints (eyes, nose, mouth corners) to approximate Pitch, Yaw, and Roll. This provides 100% stable, jitter-free results without 180° rotation flips or mathematical ambiguities.
 * **Focus Finite State Machine (FSM):**
   * **Classroom Mode:** Calculates continuous distraction. If a student is distracted (pitch/yaw out of bounds) for **>10 seconds**, a `distracted` event is logged and streamed.
   * **Exam Proctoring Mode:** Activates stricter rules:
-    * **Distraction Timer:** Reduced to **3 seconds**.
+    * **Distraction Timer:** Reduced to **2 seconds**.
     * **Neighbor Glance:** Triggers a `neighbor_glance` flag if the student looks laterally toward an adjacent desk for more than a brief second.
     * **Rapid Scan:** Tracks direction reversals. If a student shifts head direction (Left-Right-Left) **>3 times inside a 5-second window**, a `rapid_scan` cheating flag is logged.
 
@@ -126,6 +146,46 @@ When running **Option A (Local Offline)** on 16GB laptops, system memory bottlen
 4. **Caching Switch (`CACHE_LOCAL_MODELS`):**
    * If you have a **32 GB RAM laptop** (like your friend's), set `CACHE_LOCAL_MODELS=true`. The system will skip unloading, keeping all models in RAM for instant, lag-free consecutive responses.
    * If you have a **16 GB RAM laptop**, keep `CACHE_LOCAL_MODELS=false` to protect your system from allocation crashes.
+
+---
+
+## 📥 Detailed Model Download & Directory Guide
+
+To run the offline models, your team must download the weights files manually and place them in the correct directories:
+
+### 1. BGE-M3 Local Embeddings (For Offline RAG)
+* **Source Repository:** Hugging Face [BAAI/bge-m3](https://huggingface.co/BAAI/bge-m3)
+* **Target Folder:** `backend/bge_m3_local/`
+* **Files to Download:**
+  Go to [BAAI/bge-m3 Files and Versions](https://huggingface.co/BAAI/bge-m3/tree/main) and download these files directly:
+  1. `pytorch_model.bin` (~2.27 GB)
+  2. `sentencepiece.bpe.model`
+  3. `tokenizer.json`
+  4. `config.json`
+  5. `config_sentence_transformers.json`
+  6. `modules.json`
+  7. `sentence_bert_config.json`
+  8. `special_tokens_map.json`
+  9. `tokenizer_config.json`
+  10. The folder `1_Pooling/` (which contains `config.json` inside it).
+
+### 2. InsightFace Models (Face Detection & Recognition)
+By default, InsightFace downloads these models automatically at first run. If your team is offline or behind a firewalled network, they must download them manually:
+* **Source Repository:** GitHub [DeepInsight Releases](https://github.com/deepinsight/insightface/releases)
+* **Target Folder:** `C:\Users\<Your-PC-Username>\.insightface\models\buffalo_l\`
+* **Files to Download:**
+  Download the model bundle: [buffalo_l.zip](https://github.com/deepinsight/insightface/releases/download/v0.7/buffalo_l.zip)
+  Extract the contents of the zip directly into the target folder so it contains:
+  1. `det_10g.onnx` (RetinaFace Detector)
+  2. `w600k_r50.onnx` (ArcFace Recognizer)
+  3. `1k3d68.onnx`
+  4. `2d106det.onnx`
+  5. `genderage.onnx`
+
+### 3. YOLOv11 Face Weights (Optional Backend)
+* **Source Repository:** GitHub [akanametov/yolo-face](https://github.com/akanametov/yolo-face/releases)
+* **Target Folder:** `backend/`
+* **File to Download:** `yolov11n-face.pt` (or any compatible ONNX conversion like `yolov8n-face.onnx` placed in the backend directory).
 
 ---
 
