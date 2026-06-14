@@ -84,6 +84,8 @@ export const Lesson = () => {
   const [activeTab, setActiveTab] = useState<'video' | 'content' | 'quiz' | 'chat'>('video');
 
   const [chatMessages, setChatMessages] = useState<Message[]>([]);
+  const [isActiveLearning, setIsActiveLearning] = useState(false);
+  const [activeLearningMessages, setActiveLearningMessages] = useState<Message[]>([]);
   const [chatInput, setChatInput] = useState('');
   const [isChatLoading, setIsChatLoading] = useState(false);
   const [quizAnswers, setQuizAnswers] = useState<Record<string, number>>({});
@@ -186,6 +188,29 @@ export const Lesson = () => {
     }
   };
 
+  const toggleActiveLearning = async () => {
+    if (!lesson) return;
+    const newMode = !isActiveLearning;
+    setIsActiveLearning(newMode);
+    
+    if (newMode && activeLearningMessages.length === 0) {
+      setIsChatLoading(true);
+      try {
+        const res = await api.startActiveLearning(lesson.id);
+        setActiveLearningMessages([{
+          id: Date.now().toString(),
+          role: 'assistant',
+          content: res.data.message,
+          timestamp: new Date()
+        }]);
+      } catch (err) {
+        console.error(err);
+      } finally {
+        setIsChatLoading(false);
+      }
+    }
+  };
+
   const handleSendMessage = async () => {
     if (!chatInput.trim() || isChatLoading || !lesson) return;
 
@@ -195,6 +220,29 @@ export const Lesson = () => {
       content: chatInput,
       timestamp: new Date(),
     };
+
+    if (isActiveLearning) {
+      setActiveLearningMessages((prev) => [...prev, userMessage]);
+      setChatInput('');
+      setIsChatLoading(true);
+      try {
+        const response = await api.sendActiveLearningMessage(lesson.id, userMessage.content);
+        const assistantMessage: Message = {
+          id: (Date.now() + 1).toString(),
+          role: 'assistant',
+          content: response.data.message,
+          timestamp: new Date()
+        };
+        setActiveLearningMessages((prev) => [...prev, assistantMessage]);
+      } catch (err: any) {
+        setActiveLearningMessages((prev) => [...prev, {
+          id: (Date.now() + 1).toString(), role: 'assistant', content: "Error: " + (err.response?.data?.message || "Failed to send"), timestamp: new Date()
+        }]);
+      } finally {
+        setIsChatLoading(false);
+      }
+      return;
+    }
 
     setChatMessages((prev) => [...prev, userMessage]);
     setChatInput('');
@@ -569,18 +617,37 @@ export const Lesson = () => {
             {/* ========================================================= */}
             {activeTab === 'chat' && (
               <Card padding="none" className="flex flex-col h-[600px]">
-                <div className="p-4 border-b border-gray-200 dark:border-gray-700">
-                  <h2 className="text-lg font-semibold text-gray-900 dark:text-white">
-                    {t('studyAssistant' as any, language)}
+                <div className="p-4 border-b border-gray-200 dark:border-gray-700 flex justify-between items-center bg-gray-50 dark:bg-gray-800/50">
+                  <h2 className="text-lg font-semibold text-gray-900 dark:text-white flex items-center gap-2">
+                    {isActiveLearning ? <Sparkles className="w-5 h-5 text-purple-500" /> : <MessageSquare className="w-5 h-5 text-blue-500" />}
+                    {isActiveLearning ? "Active Learning Mode" : t('studyAssistant' as any, language)}
                   </h2>
+                  <button 
+                    onClick={toggleActiveLearning}
+                    className={`px-3 py-1 text-sm font-medium rounded-full transition-colors ${
+                      isActiveLearning 
+                        ? 'bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-300 border border-purple-200 dark:border-purple-800' 
+                        : 'bg-gray-200 text-gray-700 dark:bg-gray-700 dark:text-gray-300 hover:bg-gray-300 dark:hover:bg-gray-600'
+                    }`}
+                  >
+                    {isActiveLearning ? "Exit Active Mode" : "Start Active Learning"}
+                  </button>
                 </div>
-                <div className="flex-1 overflow-y-auto p-4 space-y-4">
-                  {chatMessages.length === 0 && (
+                
+                <div className={`flex-1 overflow-y-auto p-4 space-y-4 ${isActiveLearning ? 'bg-purple-50/30 dark:bg-purple-900/10' : ''}`}>
+                  {!isActiveLearning && chatMessages.length === 0 && (
                     <div className="text-center text-gray-500 dark:text-gray-400 py-8">
                       {t('askQuestion', language)}
                     </div>
                   )}
-                  {chatMessages.map((message) => (
+                  {isActiveLearning && activeLearningMessages.length === 0 && (
+                    <div className="text-center py-8">
+                      <Sparkles className="w-8 h-8 text-purple-400 mx-auto mb-3 animate-pulse" />
+                      <p className="text-purple-600 dark:text-purple-400 font-medium">Starting your personalized lesson flow...</p>
+                    </div>
+                  )}
+                  
+                  {(isActiveLearning ? activeLearningMessages : chatMessages).map((message) => (
                     <div key={message.id} className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}>
                       <div className={`max-w-[80%] rounded-lg p-3 ${message.role === 'user' ? 'bg-blue-500 text-white' : 'bg-gray-100 dark:bg-gray-700 text-gray-900 dark:text-white'
                         }`}>

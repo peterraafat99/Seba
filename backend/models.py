@@ -27,6 +27,7 @@ class User(Base):
     is_deleted = Column(Boolean, default=False)  # Soft delete flag
     deleted_at = Column(DateTime(timezone=True), nullable=True)  # When was the user deleted
     school_id = Column(Integer, ForeignKey("schools.id"), nullable=True)  # null = platform-only user
+    persona_profile = Column(Text, nullable=True)  # JSON blob of global traits (learning_style, tone, etc)
 
     # Parent relationships
     children = relationship(
@@ -171,9 +172,11 @@ class TeacherNote(Base):
     id = Column(Integer, primary_key=True, index=True)
     student_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     note_content = Column(Text, nullable=False) # e.g. "Struggles with syntax"
+    category = Column(String, default="TOPIC_SPECIFIC") # 'CORE_PERSONA', 'WEAKNESS', 'STRENGTH', 'TOPIC_SPECIFIC'
     weight = Column(Float, default=1.0) # Importance of this note
+    embedding = Column(Text, nullable=True) # JSON array of floats for semantic search
+    topic_tags = Column(String, nullable=True) # e.g. "Math", "Fractions"
     created_at = Column(DateTime(timezone=True), server_default=func.now())
-
 
     student = relationship("User")
 
@@ -329,6 +332,8 @@ class CVSession(Base):
     id = Column(Integer, primary_key=True, index=True)
     classroom_id = Column(Integer, ForeignKey("physical_classrooms.id"), nullable=False)
     session_type = Column(String, default="class")  # 'class' | 'exam'
+    teacher_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    subject_name = Column(String, nullable=True)
     started_at = Column(DateTime(timezone=True), server_default=func.now())
     ended_at = Column(DateTime(timezone=True), nullable=True)
     started_by = Column(Integer, ForeignKey("users.id"), nullable=True)
@@ -336,6 +341,7 @@ class CVSession(Base):
 
     classroom = relationship("PhysicalClassroom", back_populates="cv_sessions")
     started_by_user = relationship("User", foreign_keys=[started_by])
+    teacher = relationship("User", foreign_keys=[teacher_id])
     focus_events = relationship("FocusEvent", back_populates="session", cascade="all, delete-orphan")
 
 
@@ -363,3 +369,18 @@ class FocusEvent(Base):
 
     session = relationship("CVSession", back_populates="focus_events")
     student = relationship("User", foreign_keys=[student_id])
+
+class ActiveLearningSession(Base):
+    __tablename__ = "active_learning_sessions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    lesson_id = Column(Integer, ForeignKey("lessons.id"), nullable=False)
+    # Store the conversation history as JSON
+    history_json = Column(Text, default="[]") 
+    is_completed = Column(Boolean, default=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    user = relationship("User")
+    lesson = relationship("Lesson")

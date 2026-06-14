@@ -234,6 +234,22 @@ class ApiClient {
     return this.client.post('/chat', { lessonId: parseInt(lessonId), message });
   }
 
+  async startActiveLearning(lessonId: string) {
+    if (this.isMockMode) {
+      await sleep(1000);
+      return { data: { message: "[MOCK AI]: Welcome to Active Learning! Let's start with part 1." } };
+    }
+    return this.client.post('/active-learning/start', { lessonId: parseInt(lessonId) });
+  }
+
+  async sendActiveLearningMessage(lessonId: string, message: string) {
+    if (this.isMockMode) {
+      await sleep(1000);
+      return { data: { message: "[MOCK AI]: Good job! Let's move to part 2.", is_completed: false } };
+    }
+    return this.client.post('/active-learning/message', { lessonId: parseInt(lessonId), message });
+  }
+
   // --- Quiz ---
 
   async submitQuiz(lessonId: string, answers: Record<string, string | number>, calculatedScore?: number) {

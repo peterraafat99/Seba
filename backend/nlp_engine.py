@@ -119,29 +119,39 @@ async def extract_learning_insight(original_message: str, translated_message: st
     Original: "{original_message}"
     Translated: "{translated_message}"
     
-    **CRITERIA:**
-    1. Does the student reveal a specific **misconception**?
-    2. Is there a **gap in prerequisite knowledge**?
-    3. Is there a clear **strength** or **interest**?
+    **OUTPUT FORMAT:**
+    Return ONLY valid JSON.
+    There are TWO types of insights you can extract:
+    1. "profile_updates": Global, definitive traits about the student's persona. These will OVERWRITE existing traits. 
+       Examples of keys: "learning_style" (visual, textual, auditory), "attention_span" (short, long), "frustration_threshold" (low, high), "tone_preference" (encouraging, strict).
+    2. "situational_note": A specific, situational observation (e.g. "Struggles with fractions", "Loves space examples").
     
-    **OUTPUT:**
-    - If YES: Return a concise note (max 6 words). Example: "Struggles with loops", "Confused by recursion".
-    - If NO (e.g., just greetings or generic frustration): Return "None".
+    You can return one, both, or neither (if no insight is found).
     
-    Return ONLY the note or "None". No explanation.
+    Example Output:
+    {{
+      "profile_updates": {{"learning_style": "textual"}},
+      "situational_note": "Confused by common denominators"
+    }}
+    If no insight, return: {{}}
     """
 
     try:
-        note_content = await llm.generate(prompt)
-        note_content = note_content.strip().split("\n")[0].strip()
-
-        if "None" in note_content or len(note_content) < 3:
-            return None
-
-        return {
-            "note": note_content,
-            "weight": 1.5
-        }
+        response = await llm.generate(prompt)
+        import json
+        import re
+        # Find JSON block in the response
+        match = re.search(r'\{.*\}', response.replace('\n', ' '))
+        if match:
+            data = json.loads(match.group(0))
+            if not data:
+                return None
+            return {
+                "profile_updates": data.get("profile_updates"),
+                "situational_note": data.get("situational_note"),
+                "weight": 1.0
+            }
+        return None
 
     except Exception as e:
         print(f"Error extracting insight: {e}")

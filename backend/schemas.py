@@ -149,6 +149,14 @@ class ChatResponse(BaseModel):
     message: str
 
 
+class ActiveLearningStartRequest(BaseModel):
+    lessonId: int
+
+class ActiveLearningMessageRequest(BaseModel):
+    lessonId: int
+    message: str
+
+
 # Student/Insights schemas
 class StudentResponse(BaseModel):
     id: int
@@ -294,6 +302,8 @@ class ScheduleSlotResponse(BaseModel):
 class CVSessionStartRequest(BaseModel):
     classroom_id: int
     session_type: str = "class"  # 'class' | 'exam'
+    teacher_id: Optional[int] = None
+    subject_name: Optional[str] = None
 
 class CVSessionResponse(BaseModel):
     session_id: int

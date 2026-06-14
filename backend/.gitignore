@@ -24,3 +24,11 @@ wheels/
 learning_platform.db
 .env
 
+# Local test / demo / utility scripts
+test_chatbot_flow.py
+cv_demo.py
+check_models.py
+debug_connection.py
+tempCodeRunnerFile.py
+setup_nlp.py
+create_progress_table.py

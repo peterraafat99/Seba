@@ -140,6 +140,8 @@ async def start_cv_session(
         classroom_id=data.classroom_id,
         session_type=session_type,
         started_by=current_user.id,
+        teacher_id=data.teacher_id,
+        subject_name=data.subject_name,
     )
     db.add(cv_session)
     db.commit()

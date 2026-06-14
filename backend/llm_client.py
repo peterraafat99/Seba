@@ -129,7 +129,7 @@ class OllamaClient(LLMClient):
             "options": {
                 "temperature": 0.7,
                 "num_predict": 1024,  # 1024 tokens is now a massive budget just for the text response!
-                "num_ctx": 8192,      
+                "num_ctx": 6144,      
             },
         }
 
