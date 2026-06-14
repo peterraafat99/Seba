@@ -15,17 +15,17 @@ from models import User, Course, Lesson, Enrollment, Quiz, QuizQuestion, QuizAns
 from schemas import (
     UserCreate, UserResponse, Token, CourseCreate, CourseResponse,
     LessonCreate, LessonResponse, DashboardResponse, QuizResponse,
-    ChatMessage, ChatResponse, StudentResponse, StudentDetailResponse,
-    ActiveLearningStartRequest, ActiveLearningMessageRequest
+    ChatMessage, ChatResponse, StudentResponse, StudentDetailResponse
 )
 from auth import get_current_user, create_access_token, verify_password, get_password_hash
 from admin import admin_router
-from chatbot import get_ai_response, start_active_learning, process_active_learning
+from chatbot import get_ai_response 
 from quiz_engine import generate_personalized_quiz
 # ---- New School Platform Routers ----
 from routers.school_router import router as school_router
 from routers.cv_router import router as cv_router
 from routers.analytics_router import router as analytics_router
+from routers.attendance import router as attendance_router
 from cv_analytics.session_manager import session_manager
 
 # Create database tables
@@ -62,6 +62,7 @@ app.include_router(admin_router, prefix="/api/admin", tags=["admin"])
 app.include_router(school_router, prefix="/api/school", tags=["school"])
 app.include_router(cv_router, prefix="/api/cv", tags=["cv-analytics"])
 app.include_router(analytics_router, prefix="/api/analytics", tags=["analytics"])
+app.include_router(attendance_router, prefix="/api", tags=["Attendance (NFC)"])
 
 # WebSocket endpoint for CV streaming is registered directly on the cv_router
 # Connect via: ws://localhost:8000/api/cv/ws/{classroom_id}
@@ -560,25 +561,6 @@ async def chat(message: ChatMessage, current_user: User = Depends(get_current_us
         print(f"Chat Error: {e}")
         raise HTTPException(status_code=503, detail="AI Service unavailable")
 
-@app.post("/api/active-learning/start")
-async def api_start_active_learning(req: ActiveLearningStartRequest, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    try:
-        response = await start_active_learning(req.lessonId, current_user.id, db)
-        if "error" in response:
-            raise HTTPException(status_code=404, detail=response["error"])
-        return response
-    except Exception as e:
-        print(f"Active Learning Start Error: {e}")
-        raise HTTPException(status_code=500, detail="Failed to start active learning")
-
-@app.post("/api/active-learning/message")
-async def api_process_active_learning(req: ActiveLearningMessageRequest, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    try:
-        response = await process_active_learning(req.message, req.lessonId, current_user.id, db)
-        return response
-    except Exception as e:
-        print(f"Active Learning Message Error: {e}")
-        raise HTTPException(status_code=500, detail="Failed to process active learning message")
 
 # ==========================================
 # MULTIMODAL CHAT ENDPOINTS

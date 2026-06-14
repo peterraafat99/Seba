@@ -208,71 +208,15 @@ async def save_memory_background(user_id: int, user_message: str, translated_tex
             confidence_score=0.9
         ))
         
-        # 2. Extract & Save Hybrid Memory
+        # 2. Extract & Save Teacher Notes
         insight = await extract_learning_insight(user_message, translated_text)
         if insight:
-            import json
-            
-            # --- A. Update Persona Profile ---
-            profile_updates = insight.get("profile_updates")
-            if profile_updates and isinstance(profile_updates, dict):
-                student = db.query(User).filter(User.id == user_id).first()
-                if student:
-                    current_profile = {}
-                    if student.persona_profile:
-                        try:
-                            current_profile = json.loads(student.persona_profile)
-                        except:
-                            pass
-                    current_profile.update(profile_updates)
-                    student.persona_profile = json.dumps(current_profile)
-                    print(f"👤 Persona Profile Updated: {profile_updates}")
-
-            # --- B. Save Situational Note ---
-            situational_note = insight.get("situational_note")
-            if situational_note and isinstance(situational_note, str) and len(situational_note) > 2:
-                print(f"📝 Background Note Saved: {situational_note}")
-                
-                from vector_store import get_embedding_model, EMBEDDING_BACKEND, get_gemini_embeddings
-                
-                embedding_json = None
-                try:
-                    if EMBEDDING_BACKEND == "gemini":
-                        emb = get_gemini_embeddings(situational_note, is_query=True)[0].tolist()
-                    else:
-                        model = get_embedding_model()
-                        emb = model.encode([situational_note], normalize_embeddings=True).astype('float32')[0].tolist()
-                    embedding_json = json.dumps(emb)
-                except Exception as e:
-                    print(f"⚠️ Failed to generate embedding for note: {e}")
-
-                # Check for existing similar note
-                import numpy as np
-                is_duplicate = False
-                if embedding_json:
-                    query_vec = np.array(emb, dtype='float32')
-                    existing_notes = db.query(TeacherNote).filter(TeacherNote.student_id == user_id).all()
-                    for en in existing_notes:
-                        if en.embedding:
-                            try:
-                                en_vec = np.array(json.loads(en.embedding), dtype='float32')
-                                sim = np.dot(query_vec, en_vec) / (np.linalg.norm(query_vec) * np.linalg.norm(en_vec))
-                                if sim > 0.85: # High similarity threshold
-                                    en.weight += 0.5 # Increase weight
-                                    is_duplicate = True
-                                    print(f"🔄 Similar note found! Increased weight of: {en.note_content}")
-                                    break
-                            except:
-                                pass
-                
-                if not is_duplicate:
-                    db.add(TeacherNote(
-                        student_id=user_id,
-                        note_content=situational_note,
-                        category="SITUATIONAL",
-                        weight=insight.get("weight", 1.0),
-                        embedding=embedding_json
-                    ))
+            print(f"📝 Background Note Saved: {insight['note']}")
+            db.add(TeacherNote(
+                student_id=user_id,
+                note_content=insight["note"],
+                weight=insight["weight"]
+            ))
         db.commit()
     except Exception as e:
         print(f"⚠️ Background Memory Error: {e}")
@@ -352,54 +296,8 @@ async def get_ai_response(user_message: str, lesson_id: int, user_id: int, db: S
     student = db.query(User).filter(User.id == user_id).first()
     student_name = student.name if student else "Student"
     
-    # Format Persona Profile
-    persona_txt = "No specific persona traits recorded."
-    if student and student.persona_profile:
-        try:
-            import json
-            profile_data = json.loads(student.persona_profile)
-            if profile_data:
-                persona_txt = "\n    ".join([f"- {k.replace('_', ' ').title()}: {v}" for k, v in profile_data.items()])
-        except:
-            pass
-
-    # 1. Semantic Search for Situational Teacher Notes
-    all_notes = db.query(TeacherNote).filter(TeacherNote.student_id == user_id).all()
-    
-    top_semantic_notes = []
-    if all_notes and len(clean_msg) > 3:
-        try:
-            import json
-            import numpy as np
-            from vector_store import get_embedding_model, EMBEDDING_BACKEND, get_gemini_embeddings
-            
-            # Embed the user query
-            if EMBEDDING_BACKEND == "gemini":
-                query_vector = get_gemini_embeddings(user_message, is_query=True)[0]
-            else:
-                model = get_embedding_model()
-                query_vector = model.encode([user_message], normalize_embeddings=True).astype('float32')[0]
-                
-            scored_notes = []
-            for n in all_notes:
-                if n.embedding:
-                    try:
-                        note_vec = np.array(json.loads(n.embedding), dtype='float32')
-                        sim = np.dot(query_vector, note_vec) / (np.linalg.norm(query_vector) * np.linalg.norm(note_vec))
-                        final_score = sim * n.weight
-                        scored_notes.append((final_score, n))
-                    except:
-                        pass
-            
-            scored_notes.sort(key=lambda x: x[0], reverse=True)
-            top_semantic_notes = [n for score, n in scored_notes[:3]] # Take top 3 situational notes
-        except Exception as e:
-            print(f"⚠️ Note retrieval error: {e}")
-            top_semantic_notes = sorted(all_notes, key=lambda x: x.created_at, reverse=True)[:3]
-    elif all_notes:
-        top_semantic_notes = sorted(all_notes, key=lambda x: x.created_at, reverse=True)[:3]
-        
-    notes_txt = "\n    ".join([f"- {n.note_content}" for n in top_semantic_notes]) if top_semantic_notes else "No situational notes."
+    notes = db.query(TeacherNote).filter(TeacherNote.student_id == user_id).order_by(TeacherNote.created_at.desc()).limit(3).all()
+    notes_txt = "\n".join([f"- {n.note_content}" for n in notes]) if notes else "No specific notes."
 
     # RAG CONTEXT (Additional Reference Material)
     rag_context = ""
@@ -419,31 +317,13 @@ async def get_ai_response(user_message: str, lesson_id: int, user_id: int, db: S
     elif emotion in ["confusion", "nervousness"]:
         pedagogical_strategy = "The student is CONFUSED. Do not just give the answer; explain the 'Why' behind it using simple analogies."
 
-    # Dynamic Formatting & Visuals based on Persona
-    visuals_instruction = "4. **VISUALS:** If explaining a geometric shape or complex concept, include an image tag: [Image of concept]."
-    depth_instruction = "Keep your answers detailed but easy to follow. Keep paragraphs short and readable."
-    
-    if student and student.persona_profile:
-        profile_str = student.persona_profile.lower()
-        if "short" in profile_str or "concise" in profile_str or "dislike long" in profile_str:
-            depth_instruction = "CRITICAL: Keep your answers extremely short, concise, and to the point. Do NOT write long paragraphs. Use bullet points."
-            visuals_instruction = "4. **VISUALS:** Do NOT use image tags unless absolutely necessary, to keep the answer brief."
-        elif "in depth" in profile_str or "detailed" in profile_str or "deep" in profile_str:
-            depth_instruction = "CRITICAL: Provide a very detailed, in-depth explanation. Do not hold back information."
-            
-        if "visual" in profile_str or "picture" in profile_str:
-            visuals_instruction = "4. **VISUALS:** CRITICAL: The student is a visual learner. You MUST include image tags like [Image of concept] frequently."
-
     final_prompt = f"""
     You are 'Seba', an expert AI Math Tutor for the Egyptian National Curriculum.
     
-    **STUDENT PROFILE (GLOBAL TRAITS):**
+    **STUDENT PROFILE:**
     - Name: {student_name}
     - Detected Emotion: {emotion}
-    {persona_txt}
-    
-    **SITUATIONAL MEMORIES (RELEVANT TO QUERY):**
-    {notes_txt}
+    - Teacher Notes: {notes_txt}
     
     **CURRENT LESSON (PRIMARY FOCUS):**
     Title: {current_lesson_title}
@@ -472,11 +352,11 @@ async def get_ai_response(user_message: str, lesson_id: int, user_id: int, db: S
     3. **COMPLETELY UNKNOWN TOPICS:** If a question is about something NOT in the current lesson AND NOT in the reference material:
        - Politely decline: "That's a great question! However, I don't have information about that topic in our current curriculum. Let's focus on {current_lesson_title} for now, or feel free to ask about other lessons in the Math Grade 8 course."
     
-    {visuals_instruction}
+    4. **VISUALS:** If explaining a geometric shape or complex concept, include an image tag: [Image of concept].
     
     **FORMATTING:**
     - Use LaTeX for ALL math equations: $x^2 + y^2 = z^2$.
-    - {depth_instruction}
+    - Keep paragraphs short and readable.
     - Always cite lesson sources when using reference material
     
     Answer the student now:
@@ -514,109 +394,3 @@ If the image is unclear, describe what you can see and ask the student to clarif
     asyncio.create_task(save_memory_background(user_id, user_message, translated_text, emotion, db))
 
     return final_text
-
-# --- ACTIVE LEARNING MODE ---
-from models import ActiveLearningSession
-
-async def start_active_learning(lesson_id: int, user_id: int, db: Session):
-    import json
-    sys_lesson = db.query(Lesson).filter(Lesson.id == lesson_id).first()
-    if not sys_lesson:
-        return {"error": "Lesson not found"}
-        
-    student = db.query(User).filter(User.id == user_id).first()
-    student_name = student.name if student else "Student"
-    
-    persona_txt = ""
-    if student and student.persona_profile:
-        try:
-            profile_data = json.loads(student.persona_profile)
-            if profile_data:
-                persona_txt = "\n".join([f"- {k}: {v}" for k, v in profile_data.items()])
-        except: pass
-
-    session = db.query(ActiveLearningSession).filter_by(user_id=user_id, lesson_id=lesson_id, is_completed=False).first()
-    if not session:
-        session = ActiveLearningSession(user_id=user_id, lesson_id=lesson_id, history_json="[]")
-        db.add(session)
-        db.commit()
-    
-    history = json.loads(session.history_json)
-    if len(history) > 0:
-        return {"message": history[-1]["content"]}
-        
-    prompt = f"""
-    You are an active learning AI tutor. You are about to start teaching a lesson.
-    
-    STUDENT PROFILE:
-    Name: {student_name}
-    {persona_txt}
-    
-    LESSON CONTENT:
-    {sys_lesson.title}
-    {sys_lesson.content_en or sys_lesson.content or sys_lesson.content_ar}
-    
-    INSTRUCTIONS:
-    1. Read the lesson content above.
-    2. Pick the FIRST logical part/concept to teach. Do not teach everything at once.
-    3. Explain it simply, adapting to the student's profile.
-    4. End your response with a single question to check their understanding of this specific part.
-    """
-    
-    llm = get_llm_client()
-    response_text = await llm.generate(prompt)
-    final_text = await inject_real_images_async(response_text)
-    
-    history.append({"role": "assistant", "content": final_text})
-    session.history_json = json.dumps(history)
-    db.commit()
-    
-    return {"message": final_text}
-
-async def process_active_learning(user_message: str, lesson_id: int, user_id: int, db: Session):
-    import json
-    sys_lesson = db.query(Lesson).filter(Lesson.id == lesson_id).first()
-    session = db.query(ActiveLearningSession).filter_by(user_id=user_id, lesson_id=lesson_id, is_completed=False).first()
-    
-    if not session:
-        return {"message": "Active learning session not found. Please toggle Active Learning off and on again to restart.", "is_completed": True}
-        
-    history = json.loads(session.history_json)
-    history.append({"role": "user", "content": user_message})
-    
-    history_txt = ""
-    for msg in history[-7:]: # Keep last 7 turns
-        history_txt += f"{msg['role'].upper()}: {msg['content']}\n\n"
-        
-    prompt = f"""
-    You are an active learning AI tutor teaching a lesson part-by-part.
-    
-    FULL LESSON CONTENT:
-    {sys_lesson.title}
-    {sys_lesson.content_en or sys_lesson.content or sys_lesson.content_ar}
-    
-    RECENT CONVERSATION (Your teaching & their answers):
-    {history_txt}
-    
-    INSTRUCTIONS:
-    1. Evaluate the USER's last answer to your question.
-    2. If their answer is correct: Praise them, explain the NEXT logical part of the lesson, and ask a new question about that next part.
-    3. If their answer is incorrect or partial: Gently correct them, re-explain the CURRENT part in a different way, and ask another question to check understanding.
-    4. If the entire lesson is completed and they understood the last part, congratulate them and say "[LESSON_COMPLETE]" at the very end of your response.
-    """
-    
-    llm = get_llm_client()
-    response_text = await llm.generate(prompt)
-    final_text = await inject_real_images_async(response_text)
-    
-    is_complete = "[LESSON_COMPLETE]" in final_text
-    clean_text = final_text.replace("[LESSON_COMPLETE]", "").strip()
-    
-    history.append({"role": "assistant", "content": clean_text})
-    session.history_json = json.dumps(history)
-    if is_complete:
-        session.is_completed = True
-        
-    db.commit()
-    
-    return {"message": clean_text, "is_completed": is_complete}

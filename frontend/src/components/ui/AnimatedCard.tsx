@@ -14,8 +14,8 @@ export const AnimatedCard = ({ children, className = '', delay = 0 }: AnimatedCa
       initial={{ opacity: 0, y: 30 }}
       whileInView={{ opacity: 1, y: 0 }}
       viewport={{ once: true, margin: "-100px" }}
-      {...hoverLift}
       transition={{ duration: 0.5, delay }}
+      {...hoverLift}
       className={className}
     >
       {children}
