@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Loading Seba AI Tutor</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      width: 480px; height: 360px;
+      display: flex; justify-content: center; align-items: center;
+      background: transparent; overflow: hidden;
+      font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+      -webkit-app-region: drag;
+      user-select: none;
+    }
+    .card {
+      width: 440px; height: 320px;
+      background: linear-gradient(145deg, #1a1a3e 0%, #0f0f23 50%, #1a0a2e 100%);
+      border-radius: 24px;
+      border: 1px solid rgba(120, 80, 255, 0.25);
+      display: flex; flex-direction: column;
+      justify-content: center; align-items: center;
+      box-shadow: 0 20px 60px rgba(0,0,0,0.7), 0 0 40px rgba(100, 60, 255, 0.15);
+      position: relative; overflow: hidden;
+    }
+    .card::before {
+      content: ''; position: absolute; top: -50%; left: -50%;
+      width: 200%; height: 200%;
+      background: conic-gradient(from 0deg, transparent, rgba(120, 80, 255, 0.05), transparent, rgba(60, 180, 255, 0.05), transparent);
+      animation: rotate 6s linear infinite;
+    }
+    @keyframes rotate { to { transform: rotate(360deg); } }
+    .content { position: relative; z-index: 1; text-align: center; }
+    .logo {
+      width: 72px; height: 72px; margin: 0 auto 20px;
+      background: linear-gradient(135deg, #7c3aed, #3b82f6);
+      border-radius: 18px; display: flex;
+      justify-content: center; align-items: center;
+      font-size: 36px; animation: pulse 2s ease-in-out infinite;
+      box-shadow: 0 8px 30px rgba(124, 58, 237, 0.4);
+    }
+    @keyframes pulse {
+      0%, 100% { transform: scale(1); }
+      50% { transform: scale(1.05); }
+    }
+    h1 {
+      font-size: 22px; font-weight: 700;
+      background: linear-gradient(135deg, #c4b5fd, #93c5fd);
+      -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+      margin-bottom: 6px; letter-spacing: -0.3px;
+    }
+    .sub { color: rgba(200, 200, 255, 0.5); font-size: 12px; margin-bottom: 28px; }
+    .loader-track {
+      width: 200px; height: 4px;
+      background: rgba(255,255,255,0.08); border-radius: 4px;
+      overflow: hidden; margin-bottom: 14px;
+    }
+    .loader-bar {
+      width: 40%; height: 100%; border-radius: 4px;
+      background: linear-gradient(90deg, #7c3aed, #3b82f6, #7c3aed);
+      background-size: 200% 100%;
+      animation: slide 1.5s ease-in-out infinite;
+    }
+    @keyframes slide {
+      0% { transform: translateX(-100%); }
+      100% { transform: translateX(350%); }
+    }
+    .status {
+      color: rgba(200, 200, 255, 0.45); font-size: 11px;
+      animation: blink 1.5s ease-in-out infinite;
+    }
+    @keyframes blink {
+      0%, 100% { opacity: 0.45; }
+      50% { opacity: 0.9; }
+    }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="content">
+      <div class="logo">🎓</div>
+      <h1>Seba AI Tutor</h1>
+      <p class="sub">Desktop Edition</p>
+      <div class="loader-track"><div class="loader-bar"></div></div>
+      <p class="status">Starting services…</p>
+    </div>
+  </div>
+</body>
+</html>

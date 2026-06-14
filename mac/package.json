@@ -1,0 +1,97 @@
+{
+  "name": "seba-ai-tutor-mac",
+  "version": "1.0.0",
+  "description": "Seba AI Tutor - Cross-platform desktop application for intelligent learning",
+  "main": "main.js",
+  "author": "Seba AI Tutor",
+  "license": "MIT",
+  "scripts": {
+    "start": "electron .",
+    "dev": "electron .",
+    "build:frontend": "cd ../frontend && npm run build",
+    "build:win": "npm run build:frontend && electron-builder --win",
+    "build:win:portable": "npm run build:frontend && electron-builder --win portable",
+    "build:win:nsis": "npm run build:frontend && electron-builder --win nsis",
+    "build:mac": "npm run build:frontend && electron-builder --mac",
+    "build:linux": "npm run build:frontend && electron-builder --linux",
+    "build:all": "npm run build:frontend && electron-builder --win --mac --linux",
+    "build:dir": "npm run build:frontend && electron-builder --win --dir"
+  },
+  "devDependencies": {
+    "electron": "^25.0.0",
+    "electron-builder": "^24.13.3"
+  },
+  "build": {
+    "appId": "com.seba.ai-tutor",
+    "productName": "Seba AI Tutor",
+    "copyright": "Copyright © 2025 Seba AI Tutor",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "main.js",
+      "splash.html",
+      "index.html",
+      "icon.png"
+    ],
+    "extraResources": [
+      {
+        "from": "../frontend/dist",
+        "to": "frontend/dist",
+        "filter": ["**/*"]
+      },
+      {
+        "from": "../backend",
+        "to": "backend",
+        "filter": [
+          "**/*",
+          "!__pycache__/**",
+          "!*.pyc",
+          "!.gitignore"
+        ]
+      }
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "portable",
+          "arch": ["x64"]
+        }
+      ],
+      "icon": "icon.png"
+    },
+    "mac": {
+      "target": [
+        {
+          "target": "dmg",
+          "arch": ["x64", "arm64"]
+        }
+      ],
+      "icon": "icon.png",
+      "category": "public.app-category.education"
+    },
+    "linux": {
+      "target": [
+        {
+          "target": "AppImage",
+          "arch": ["x64"]
+        }
+      ],
+      "icon": "icon.png",
+      "category": "Education"
+    },
+    "portable": {
+      "artifactName": "Seba-AI-Tutor.exe"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "installerIcon": "icon.png",
+      "uninstallerIcon": "icon.png",
+      "artifactName": "Seba-AI-Tutor-Setup.exe"
+    },
+    "dmg": {
+      "artifactName": "Seba-AI-Tutor.dmg"
+    }
+  }
+}
