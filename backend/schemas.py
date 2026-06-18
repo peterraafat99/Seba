@@ -310,6 +310,7 @@ class CVSessionStartRequest(BaseModel):
     teacher_id: Optional[int] = None
     course_id: Optional[int] = None
     lesson_id: Optional[int] = None
+    nfc_only: bool = False
 
 
 class CVSessionResponse(BaseModel):

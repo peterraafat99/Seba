@@ -186,6 +186,7 @@ async def start_cv_session(
         faiss_index=faiss_index,
         exam_config=exam_config,
         db_event_callback=persist_focus_event,
+        nfc_only=data.nfc_only,
     )
     worker.start()
 

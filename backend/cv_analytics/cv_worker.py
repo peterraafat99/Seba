@@ -82,6 +82,7 @@ class CVWorker:
         faiss_index: ClassFAISSIndex,
         exam_config: Optional[Dict] = None,
         db_event_callback: Optional[callable] = None,
+        nfc_only: bool = False,
     ):
         self.session_id = session_id
         self.classroom_id = classroom_id
@@ -90,6 +91,7 @@ class CVWorker:
         self.faiss_index = faiss_index
         self.exam_config = exam_config or {}
         self.db_event_callback = db_event_callback
+        self.nfc_only = nfc_only
 
         self._stop_event = threading.Event()
         self._thread: Optional[threading.Thread] = None
@@ -191,6 +193,37 @@ class CVWorker:
             logger.info(f"[CVWorker] Cleanup complete for classroom {self.classroom_id}.")
 
     # ------------------------------------------------------------------
+    # NFC Attendance Helper
+    # ------------------------------------------------------------------
+
+    def _get_nfc_present_student_ids(self) -> set:
+        """Fetch IDs of students who scanned present via NFC in this classroom today."""
+        from database import SessionLocal
+        from models import AttendanceRecord
+        from datetime import datetime, time
+        
+        present_ids = set()
+        db = SessionLocal()
+        try:
+            today_start = datetime.combine(datetime.today(), time.min)
+            records = (
+                db.query(AttendanceRecord)
+                .filter(
+                    AttendanceRecord.classroom_id == self.classroom_id,
+                    AttendanceRecord.status == "present",
+                    AttendanceRecord.timestamp >= today_start
+                )
+                .all()
+            )
+            for r in records:
+                present_ids.add(str(r.student_id))
+        except Exception as e:
+            logger.error(f"[CVWorker] Error fetching NFC attendance: {e}")
+        finally:
+            db.close()
+        return present_ids
+
+    # ------------------------------------------------------------------
     # Frame Processing
     # ------------------------------------------------------------------
 
@@ -198,6 +231,11 @@ class CVWorker:
         self, frame: np.ndarray, frame_count: int, is_anchor: bool
     ) -> Dict[str, Any]:
         """Process a single frame through the full pipeline."""
+
+        # Fetch NFC present student IDs if in nfc_only mode
+        present_set = set()
+        if self.nfc_only:
+            present_set = self._get_nfc_present_student_ids()
 
         # ---- ANCHOR FRAME: Detection + Embedding + FAISS + Tracker Init ----
         if is_anchor:
@@ -249,6 +287,11 @@ class CVWorker:
             return interArea / float(boxAArea + boxBArea - interArea + 1e-5)
 
         for track in tracks:
+            if self.nfc_only:
+                # Ignore unrecognized/UNKNOWN face or non-present student completely
+                if not track.student_id or str(track.student_id) not in present_set:
+                    continue
+
             # Map tracker bounding box back to current frame's detections to get 5-pt landmarks (kps)
             best_kps = None
             best_iou = 0.0

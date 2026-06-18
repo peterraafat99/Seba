@@ -229,6 +229,7 @@ export const Admin = () => {
   // Live session setup
   const [liveSessionLessonId, setLiveSessionLessonId] = useState<string>('');
   const [liveSessionCameraIndex, setLiveSessionCameraIndex] = useState<string>('0');
+  const [liveSessionNfcOnly, setLiveSessionNfcOnly] = useState<boolean>(false);
 
   // Quiz Builder state
   const [quizForm, setQuizForm] = useState({
@@ -3053,6 +3054,30 @@ export const Admin = () => {
                               💡 If you're using an external/USB webcam (e.g. Microsoft LifeCam), try Camera 1 or Camera 2.
                             </p>
                           </div>
+
+                          <div>
+                            <label className="block text-xs font-semibold text-gray-700 dark:text-gray-300 mb-2">
+                              CV Proctoring Mode
+                            </label>
+                            <div className="flex gap-4">
+                              <button
+                                type="button"
+                                onClick={() => setLiveSessionNfcOnly(true)}
+                                className={`flex-1 p-3 rounded-xl border-2 text-left transition-all ${liveSessionNfcOnly ? 'border-blue-600 bg-blue-50/50 dark:bg-blue-900/10' : 'border-gray-200 dark:border-gray-700 hover:border-gray-300 bg-white dark:bg-gray-800'}`}
+                              >
+                                <span className="block font-bold text-sm text-gray-900 dark:text-white">Mode 1: NFC Scoped</span>
+                                <span className="block text-xs text-gray-500 dark:text-gray-400 mt-1">CV only tracks students who scanned present via NFC today.</span>
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setLiveSessionNfcOnly(false)}
+                                className={`flex-1 p-3 rounded-xl border-2 text-left transition-all ${!liveSessionNfcOnly ? 'border-blue-600 bg-blue-50/50 dark:bg-blue-900/10' : 'border-gray-200 dark:border-gray-700 hover:border-gray-300 bg-white dark:bg-gray-800'}`}
+                              >
+                                <span className="block font-bold text-sm text-gray-900 dark:text-white">Mode 2: Normal Roster</span>
+                                <span className="block text-xs text-gray-500 dark:text-gray-400 mt-1">CV tracks all roster students and alerts unknown faces.</span>
+                              </button>
+                            </div>
+                          </div>
                         </div>
 
                         <Button
@@ -3069,7 +3094,8 @@ export const Admin = () => {
                                 liveSessionCameraIndex,
                                 currentUser.id,
                                 Number(selectedCourseIdForInsights),
-                                liveSessionLessonId ? Number(liveSessionLessonId) : undefined
+                                liveSessionLessonId ? Number(liveSessionLessonId) : undefined,
+                                liveSessionNfcOnly
                               );
                               navigate(`/school/classroom/${selectedClassroomIdForInsights}/live`);
                             } catch (error) {

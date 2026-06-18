@@ -924,7 +924,8 @@ class ApiClient {
     cameraSource: string = '0',
     teacherId?: number,
     courseId?: number,
-    lessonId?: number
+    lessonId?: number,
+    nfcOnly: boolean = false
   ) {
     if (this.isMockMode) {
       await sleep();
@@ -936,7 +937,8 @@ class ApiClient {
       camera_source: cameraSource,
       teacher_id: teacherId,
       course_id: courseId,
-      lesson_id: lessonId
+      lesson_id: lessonId,
+      nfc_only: nfcOnly
     });
   }
 
