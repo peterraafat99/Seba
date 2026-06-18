@@ -24,9 +24,9 @@ def get_embedding_model() -> SentenceTransformer:
     """Lazy-load the local embedding model (avoids slowing down server startup)."""
     global _embedding_model
     if _embedding_model is None:
-        print(f"⏳ Loading local embedding model: {EMBEDDING_MODEL_NAME} ...")
+        print(f"Loading local embedding model: {EMBEDDING_MODEL_NAME} ...")
         _embedding_model = SentenceTransformer(EMBEDDING_MODEL_NAME, device="cpu")
-        print(f"✅ Embedding model ready  ({EMBEDDING_DIM}-dim, local, no API needed)")
+        print(f"Embedding model ready  ({EMBEDDING_DIM}-dim, local, no API needed)")
     return _embedding_model
 
 
@@ -56,13 +56,13 @@ def get_gemini_embeddings(texts: list | str, is_query: bool = False) -> np.ndarr
             except ResourceExhausted as e:
                 if attempt == retries - 1:
                     raise e
-                print(f"⚠️ Rate limit hit (429). Retrying in {delay} seconds (attempt {attempt+1}/{retries})...")
+                print(f"Rate limit hit (429). Retrying in {delay} seconds (attempt {attempt+1}/{retries})...")
                 time.sleep(delay)
                 delay *= 2
             except Exception as e:
                 if attempt == retries - 1:
                     raise e
-                print(f"⚠️ API error: {e}. Retrying in {delay} seconds (attempt {attempt+1}/{retries})...")
+                print(f"API error: {e}. Retrying in {delay} seconds (attempt {attempt+1}/{retries})...")
                 time.sleep(delay)
                 delay *= 2
 
@@ -76,7 +76,7 @@ def get_gemini_embeddings(texts: list | str, is_query: bool = False) -> np.ndarr
         # Batch in chunks of 16 (smaller batch size to stay safer under free-tier TPM limits)
         for i in range(0, len(input_list), 16):
             if i > 0:
-                print("⏳ Spacing API requests (sleeping 3 seconds)...")
+                print("Spacing API requests (sleeping 3 seconds)...")
                 time.sleep(3)
             batch = input_list[i:i+16]
             response = embed_with_retry(batch)
@@ -117,10 +117,10 @@ class KnowledgeBase:
             # Detect dimension mismatch (old Gemini 768-dim vs new BGE-M3 1024-dim)
             if self.index.d != EMBEDDING_DIM:
                 print(
-                    f"⚠️  FAISS index has {self.index.d}-dim embeddings "
+                    f"FAISS index has {self.index.d}-dim embeddings "
                     f"but current model produces {EMBEDDING_DIM}-dim.\n"
                     f"   The old index was built with Gemini embeddings.\n"
-                    f"   👉 Run: python build_rag.py   to rebuild with local embeddings."
+                    f"   Run: python build_rag.py   to rebuild with local embeddings."
                 )
                 # Start fresh so queries don't crash
                 self.index = faiss.IndexFlatL2(EMBEDDING_DIM)
@@ -129,9 +129,9 @@ class KnowledgeBase:
                 # Rebuild BM25 from loaded metadata
                 tokenized_corpus = [doc['text'].lower().split() for doc in self.metadata]
                 self.bm25 = BM25Okapi(tokenized_corpus)
-                print(f"✅ Knowledge Base loaded: {len(self.metadata)} chunks  ({EMBEDDING_DIM}-dim, local embeddings)")
+                print(f"Knowledge Base loaded: {len(self.metadata)} chunks  ({EMBEDDING_DIM}-dim, local embeddings)")
         else:
-            print(f"⚠️  No FAISS index found. Run: python build_rag.py")
+            print(f"No FAISS index found. Run: python build_rag.py")
             self.index = faiss.IndexFlatL2(EMBEDDING_DIM)
 
     def add_lessons(self, lessons_data: list):
@@ -142,15 +142,15 @@ class KnowledgeBase:
         texts = [item['text'] for item in lessons_data]
 
         if EMBEDDING_BACKEND == "gemini":
-            print(f"⏳ Generating Gemini cloud embeddings for {len(texts)} chunks...")
+            print(f"Generating Gemini cloud embeddings for {len(texts)} chunks...")
             embeddings = get_gemini_embeddings(texts, is_query=False)
         else:
             model = get_embedding_model()
-            print(f"⏳ Generating local embeddings for {len(texts)} chunks...")
+            print(f"Generating local embeddings for {len(texts)} chunks...")
             embeddings = model.encode(
                 texts,
                 normalize_embeddings=True,
-                show_progress_bar=True,
+                show_progress_bar=False,
                 batch_size=4,
             ).astype('float32')
 
@@ -162,7 +162,7 @@ class KnowledgeBase:
         self.bm25 = BM25Okapi(tokenized_corpus)
 
         self.save()
-        print(f"✅ Added {len(lessons_data)} chunks. Knowledge Base ready.")
+        print(f"Added {len(lessons_data)} chunks. Knowledge Base ready.")
 
     def search(self, query: str, course_id: int = None, k=3):
         """Hybrid Search (FAISS vector + BM25 keyword) + Cross-Encoder reranking."""
@@ -187,7 +187,21 @@ class KnowledgeBase:
         for idx in v_indices[0]:
             if idx != -1 and idx < len(self.metadata):
                 doc = self.metadata[idx]
-                if course_id is None or doc.get('course_id') == course_id:
+                doc_course_id = doc.get('course_id')
+                doc_title = doc.get('title', '')
+                is_match = False
+                if course_id is None:
+                    is_match = True
+                elif doc_course_id == course_id:
+                    is_match = True
+                elif doc_course_id == 1:
+                    # Map generic Math course ID to platform courses (6 = Term 1, 7 = Term 2)
+                    if course_id == 6 and "Term 1" in doc_title:
+                        is_match = True
+                    elif course_id == 7 and "Term 2" in doc_title:
+                        is_match = True
+                
+                if is_match:
                     candidates[idx] = doc
 
         # B. Keyword Search (BM25 — unchanged)
@@ -196,7 +210,21 @@ class KnowledgeBase:
             bm25_docs = self.bm25.get_top_n(tokenized_query, self.metadata, n=10)
 
             for doc in bm25_docs:
-                if course_id is None or doc.get('course_id') == course_id:
+                doc_course_id = doc.get('course_id')
+                doc_title = doc.get('title', '')
+                is_match = False
+                if course_id is None:
+                    is_match = True
+                elif doc_course_id == course_id:
+                    is_match = True
+                elif doc_course_id == 1:
+                    # Map generic Math course ID to platform courses (6 = Term 1, 7 = Term 2)
+                    if course_id == 6 and "Term 1" in doc_title:
+                        is_match = True
+                    elif course_id == 7 and "Term 2" in doc_title:
+                        is_match = True
+                
+                if is_match:
                     if doc not in candidates.values():
                         candidates[f"bm25_{len(candidates)}"] = doc
 
@@ -206,9 +234,9 @@ class KnowledgeBase:
 
         # --- STEP 2: RERANKING (cross-encoder — unchanged) ---
         if self.reranker is None:
-            print("⏳ Loading local reranker model (CrossEncoder) on CPU...")
+            print("Loading local reranker model (CrossEncoder) on CPU...")
             self.reranker = CrossEncoder('cross-encoder/ms-marco-MiniLM-L-6-v2', device="cpu")
-            print("✅ Reranker model ready.")
+            print("Reranker model ready.")
 
         top_candidates = unique_candidates[:10]
         pairs = [[query, doc['text']] for doc in top_candidates]

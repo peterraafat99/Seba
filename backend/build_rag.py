@@ -24,11 +24,11 @@ def build_index():
         os.remove(index_file)
     if os.path.exists(meta_file):
         os.remove(meta_file)
-    print(f"🧹 Cleared old AI memory files ({index_file}, {meta_file}).")
+    print(f"Cleared old AI memory files ({index_file}, {meta_file}).")
 
     # Check DB
     if not os.path.exists(RAG_DB_FILE):
-        print(f"❌ Error: {RAG_DB_FILE} not found. Run 'python ingest_pdfs.py' first!")
+        print(f"Error: {RAG_DB_FILE} not found. Run 'python ingest_pdfs.py' first!")
         return
 
     rag_engine = create_engine(RAG_DB_URL, connect_args={"check_same_thread": False})
@@ -39,7 +39,7 @@ def build_index():
     try:
         kb = KnowledgeBase()
     except Exception as e:
-        print(f"❌ Error initializing KnowledgeBase: {e}")
+        print(f"Error initializing KnowledgeBase: {e}")
         return
     
     # Splitter Config
@@ -52,10 +52,10 @@ def build_index():
     lessons = db.query(Lesson).all()
     
     if not lessons:
-        print("❌ No lessons found in database. Run 'python ingest_pdfs.py' first!")
+        print("Error: No lessons found in database. Run 'python ingest_pdfs.py' first!")
         return
 
-    print(f"🔄 Processing {len(lessons)} lessons for the Knowledge Base...")
+    print(f"Processing {len(lessons)} lessons for the Knowledge Base...")
 
     data_to_embed = []
     
@@ -78,15 +78,15 @@ def build_index():
     if data_to_embed:
         backend = os.getenv("EMBEDDING_BACKEND", "local").lower()
         if backend == "gemini":
-            print(f"🚀 Embedding {len(data_to_embed)} chunks via Google Gemini API...")
+            print(f"Embedding {len(data_to_embed)} chunks via Google Gemini API...")
             kb.add_lessons(data_to_embed)
-            print("✅ SUCCESS: Knowledge Base updated with Gemini Cloud embeddings.")
+            print("SUCCESS: Knowledge Base updated with Gemini Cloud embeddings.")
         else:
-            print(f"🚀 Embedding {len(data_to_embed)} chunks locally (BGE-M3, no API needed)...")
+            print(f"Embedding {len(data_to_embed)} chunks locally (BGE-M3, no API needed)...")
             kb.add_lessons(data_to_embed)
-            print("✅ SUCCESS: Knowledge Base updated with local BGE-M3 embeddings.")
+            print("SUCCESS: Knowledge Base updated with local BGE-M3 embeddings.")
     else:
-        print("⚠️ No content found to index.")
+        print("No content found to index.")
 
 if __name__ == "__main__":
     build_index()

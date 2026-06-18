@@ -13,6 +13,9 @@ export const Navbar = () => {
   const { language, toggle: toggleLanguage } = useLanguage();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const navigate = useNavigate();
+  const userString = localStorage.getItem('user');
+  const user = userString ? JSON.parse(userString) : null;
+  const isAdminOrTeacher = user && ['admin', 'school_admin', 'super_admin', 'teacher'].includes(user.role);
 
   const handleLogout = async () => {
     try {
@@ -51,12 +54,24 @@ export const Navbar = () => {
             >
               {t('courses')}
             </Link>
-            <Link
-              to="/school"
-              className="px-3 py-2 text-sm font-medium text-indigo-600 dark:text-indigo-400 hover:text-indigo-800 dark:hover:text-indigo-300 transition-colors flex items-center gap-1"
-            >
-              School Campus
-            </Link>
+            {isAdminOrTeacher && (
+              <>
+                <Link
+                  to="/school"
+                  className="px-3 py-2 text-sm font-medium text-indigo-655 dark:text-indigo-400 hover:text-indigo-800 dark:hover:text-indigo-300 transition-colors flex items-center gap-1"
+                >
+                  School Campus
+                </Link>
+                <Link
+                  to="/admin"
+                  className="px-3 py-2 text-sm font-medium text-red-600 dark:text-red-400 hover:text-red-850 dark:hover:text-indigo-300 transition-colors"
+                >
+                  {user?.role === 'teacher'
+                    ? (language === 'ar' ? 'بوابة المعلم' : 'Teacher')
+                    : (language === 'ar' ? 'لوحة الإدارة' : 'Admin Panel')}
+                </Link>
+              </>
+            )}
 
 
 
@@ -108,6 +123,26 @@ export const Navbar = () => {
             >
               {t('courses')}
             </Link>
+            {isAdminOrTeacher && (
+              <>
+                <Link
+                  to="/school"
+                  className="block px-3 py-2 text-base font-medium text-indigo-600 dark:text-indigo-400 hover:text-indigo-800"
+                  onClick={() => setMobileMenuOpen(false)}
+                >
+                  School Campus
+                </Link>
+                <Link
+                  to="/admin"
+                  className="block px-3 py-2 text-base font-medium text-red-650 dark:text-red-400 hover:text-red-800"
+                  onClick={() => setMobileMenuOpen(false)}
+                >
+                  {user?.role === 'teacher'
+                    ? (language === 'ar' ? 'بوابة المعلم' : 'Teacher')
+                    : (language === 'ar' ? 'لوحة الإدارة' : 'Admin Panel')}
+                </Link>
+              </>
+            )}
 
 
             <div className="flex items-center gap-2 px-3 py-2 mt-2">

@@ -3,7 +3,7 @@ import { api } from '@/utils/api';
 import { Upload, Camera, CheckCircle, XCircle } from 'lucide-react';
 import { motion } from 'framer-motion';
 
-export function FaceEnrollment({ studentId, onComplete }: { studentId: string | number, onComplete?: () => void }) {
+export function FaceEnrollment({ studentId, studentName, onComplete }: { studentId: string | number, studentName?: string, onComplete?: () => void }) {
   const [file, setFile] = useState<File | null>(null);
   const [preview, setPreview] = useState<string | null>(null);
   const [status, setStatus] = useState<'idle' | 'uploading' | 'success' | 'error'>('idle');
@@ -59,7 +59,9 @@ export function FaceEnrollment({ studentId, onComplete }: { studentId: string | 
           <Camera className="w-6 h-6 text-indigo-600 dark:text-indigo-400" />
         </div>
         <h2 className="text-xl font-bold text-gray-900 dark:text-white">Face Enrollment</h2>
-        <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">Upload a clear photo for student {studentId}</p>
+        <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
+          Upload a clear photo for {studentName || `student (ID: ${studentId})`}
+        </p>
       </div>
 
       {!preview ? (

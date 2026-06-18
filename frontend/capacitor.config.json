@@ -1,0 +1,42 @@
+{
+  "appId": "com.seba.ai.tutor",
+  "appName": "Seba AI Tutor",
+  "webDir": "dist",
+  "server": {
+    "url": "https://YOUR_LIVE_URL_HERE.com",
+    "cleartext": true,
+    "androidScheme": "https",
+    "iosScheme": "https"
+  },
+  "plugins": {
+    "SplashScreen": {
+      "launchShowDuration": 2000,
+      "launchAutoHide": true,
+      "backgroundColor": "#0f0f23",
+      "androidSplashResourceName": "splash",
+      "androidScaleType": "CENTER_CROP",
+      "showSpinner": true,
+      "androidSpinnerStyle": "large",
+      "iosSpinnerStyle": "large",
+      "spinnerColor": "#7c3aed"
+    },
+    "StatusBar": {
+      "style": "Dark",
+      "backgroundColor": "#0f0f23"
+    },
+    "Keyboard": {
+      "resize": "body",
+      "style": "dark"
+    }
+  },
+  "ios": {
+    "contentInset": "automatic",
+    "allowsLinkPreview": false,
+    "scrollEnabled": true
+  },
+  "android": {
+    "allowMixedContent": true,
+    "captureInput": true,
+    "webContentsDebuggingEnabled": false
+  }
+}

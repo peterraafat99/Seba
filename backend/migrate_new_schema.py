@@ -17,6 +17,7 @@ def add_column(table, column, definition):
 
 add_column("users", "school_id", "INTEGER")
 add_column("users", "persona_profile", "TEXT")
+add_column("users", "nfc_tag_id", "VARCHAR")
 add_column("teacher_notes", "category", "VARCHAR DEFAULT 'TOPIC_SPECIFIC'")
 add_column("teacher_notes", "embedding", "TEXT")
 add_column("teacher_notes", "topic_tags", "VARCHAR")

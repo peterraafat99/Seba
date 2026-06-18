@@ -49,7 +49,12 @@ class LLMClient(ABC):
     """Abstract base — all backends expose the same interface."""
 
     @abstractmethod
-    async def generate(self, prompt: str, image_b64: Optional[str] = None) -> str:
+    async def generate(
+        self,
+        prompt: str,
+        system_instruction: Optional[str] = None,
+        image_b64: Optional[str] = None,
+    ) -> str:
         """
         Generate a text response.
 
@@ -100,12 +105,24 @@ class OllamaClient(LLMClient):
     def backend_name(self) -> str:
         return f"ollama:{self.model}"
 
-    async def generate(self, prompt: str, image_b64: Optional[str] = None) -> str:
+    async def generate(
+        self,
+        prompt: str,
+        system_instruction: Optional[str] = None,
+        image_b64: Optional[str] = None,
+    ) -> str:
         """
         Send a chat completion request to Ollama.
         Uses /api/chat endpoint which supports vision models.
         """
         url = f"{self.host}/api/chat"
+
+        messages = []
+        if system_instruction:
+            messages.append({
+                "role": "system",
+                "content": system_instruction,
+            })
 
         # Build message content — Ollama vision format
         if image_b64:
@@ -119,17 +136,18 @@ class OllamaClient(LLMClient):
                 "role": "user",
                 "content": prompt,
             }
+        messages.append(content_message)
 
         payload = {
             "model": self.model,
-            "messages": [content_message],
+            "messages": messages,
             "stream": False, 
             "think": False,       # 🔥 ADD THIS HERE AT THE ROOT LEVEL!
             "keep_alive": "30m",  # Keeps model in VRAM for fast follow-up chats
             "options": {
                 "temperature": 0.7,
                 "num_predict": 1024,  # 1024 tokens is now a massive budget just for the text response!
-                "num_ctx": 6144,      
+                "num_ctx": 8192,      
             },
         }
 
@@ -217,33 +235,85 @@ class GeminiClient(LLMClient):
     def backend_name(self) -> str:
         return f"gemini:{self.model_name}"
 
-    async def generate(self, prompt: str, image_b64: Optional[str] = None) -> str:
-        model = self._genai.GenerativeModel(self.model_name)
+    async def generate(
+        self,
+        prompt: str,
+        system_instruction: Optional[str] = None,
+        image_b64: Optional[str] = None,
+    ) -> str:
+        try:
+            model = self._genai.GenerativeModel(
+                self.model_name,
+                system_instruction=system_instruction,
+                generation_config={
+                    "temperature": 0.7,
+                    "max_output_tokens": 2048,
+                }
+            )
 
-        if image_b64:
-            # Gemini vision: pass image as Part
-            import PIL.Image
-            import io
+            if image_b64:
+                # Gemini vision: pass image as Part
+                import PIL.Image
+                import io
 
-            image_bytes = base64.b64decode(image_b64)
-            image = PIL.Image.open(io.BytesIO(image_bytes))
-            response = await model.generate_content_async([prompt, image])
-        else:
-            response = await model.generate_content_async(prompt)
+                image_bytes = base64.b64decode(image_b64)
+                image = PIL.Image.open(io.BytesIO(image_bytes))
+                response = await model.generate_content_async([prompt, image])
+            else:
+                response = await model.generate_content_async(prompt)
 
-        return response.text.strip()
+            if not response:
+                raise RuntimeError("Gemini returned an empty response. The model may have refused the request.")
+
+            # Filter out thinking/planning parts if there are multiple parts (Google Generative AI returns thinking as the first part)
+            try:
+                parts = response.candidates[0].content.parts
+                if len(parts) > 1:
+                    # Look for the last part containing text
+                    text = parts[-1].text
+                else:
+                    text = response.text
+            except Exception:
+                text = response.text
+
+            if not text:
+                raise RuntimeError("Gemini returned an empty response (no text found).")
+
+            logger.info(f"[Gemini] Response length: {len(text)} chars")
+            return text.strip()
+
+        except Exception as e:
+            err_str = str(e)
+            # Surface a clear, actionable error message
+            if "API_KEY_INVALID" in err_str or "invalid" in err_str.lower():
+                msg = f"❌ Gemini API Key is INVALID. Check GEMINI_API_KEY in .env\nDetails: {err_str}"
+            elif "PERMISSION_DENIED" in err_str or "403" in err_str:
+                msg = f"❌ Gemini API Key has no permission for model '{self.model_name}'. Check your Google AI Studio plan.\nDetails: {err_str}"
+            elif "NOT_FOUND" in err_str or "404" in err_str:
+                msg = f"❌ Model '{self.model_name}' not found in Gemini API. Check CLOUD_MODEL in .env\nValid IDs: gemma-4-31b-it, gemini-2.5-flash, gemini-2.0-flash\nDetails: {err_str}"
+            elif "QUOTA" in err_str or "429" in err_str or "quota" in err_str.lower():
+                msg = f"❌ Gemini API quota exceeded. Wait and retry, or upgrade your plan.\nDetails: {err_str}"
+            elif "timeout" in err_str.lower():
+                msg = f"❌ Gemini API timed out. The model may be overloaded.\nDetails: {err_str}"
+            else:
+                msg = f"❌ Gemini API Error: {err_str}"
+            
+            logger.error(f"[Gemini] {msg}")
+            print(f"\n{'='*60}\n{msg}\n{'='*60}\n")
+            raise RuntimeError(msg)
+
 
 
 # ---------------------------------------------------------------------------
 # Factory — returns the correct client based on .env settings
 # ---------------------------------------------------------------------------
 
-_client_instance: Optional[LLMClient] = None
+_client_instances: dict[str, LLMClient] = {}
 
 
 def get_llm_client(force_backend: Optional[str] = None) -> LLMClient:
     """
-    Returns a singleton LLM client based on LLM_BACKEND env var.
+    Returns a cached LLM client based on LLM_BACKEND env var or the forced backend.
 
     LLM_BACKEND=ollama  → OllamaClient (local Qwen 3.5 9B)
     LLM_BACKEND=gemini  → GeminiClient (cloud Gemini/Gemma API)
@@ -252,36 +322,33 @@ def get_llm_client(force_backend: Optional[str] = None) -> LLMClient:
         LLM_BACKEND=gemini
         CLOUD_MODEL=gemma-4-31b-it
     """
-    global _client_instance
+    global _client_instances
 
-    # Allow forcing a backend (useful for tests)
+    # Allow forcing a backend (useful for tests and dynamic switching)
     backend = force_backend or os.getenv("LLM_BACKEND", "ollama").lower()
 
-    # Only create once (singleton)
-    if _client_instance is not None:
-        return _client_instance
+    if backend not in _client_instances:
+        if backend == "ollama":
+            _client_instances[backend] = OllamaClient(
+                model=os.getenv("OLLAMA_MODEL", "seba-tutor"),
+                host=os.getenv("OLLAMA_HOST", "http://localhost:11434"),
+                timeout=int(os.getenv("OLLAMA_TIMEOUT", "120")),
+            )
+        elif backend == "gemini":
+            _client_instances[backend] = GeminiClient(
+                model=os.getenv("CLOUD_MODEL", "gemma-4-31b-it"),
+                api_key=os.getenv("GEMINI_API_KEY"),
+            )
+        else:
+            raise ValueError(
+                f"Unknown LLM_BACKEND='{backend}'. Use 'ollama' or 'gemini'."
+            )
+        logger.info(f"[LLM] Initialized backend: {_client_instances[backend].backend_name()}")
 
-    if backend == "ollama":
-        _client_instance = OllamaClient(
-            model=os.getenv("OLLAMA_MODEL", "seba-tutor"),
-            host=os.getenv("OLLAMA_HOST", "http://localhost:11434"),
-            timeout=int(os.getenv("OLLAMA_TIMEOUT", "120")),
-        )
-    elif backend == "gemini":
-        _client_instance = GeminiClient(
-            model=os.getenv("CLOUD_MODEL", "gemini-2.5-flash"),
-            api_key=os.getenv("GEMINI_API_KEY"),
-        )
-    else:
-        raise ValueError(
-            f"Unknown LLM_BACKEND='{backend}'. Use 'ollama' or 'gemini'."
-        )
-
-    logger.info(f"[LLM] Using backend: {_client_instance.backend_name()}")
-    return _client_instance
+    return _client_instances[backend]
 
 
 def reset_llm_client():
-    """Force re-creation of the client (e.g., after .env changes in tests)."""
-    global _client_instance
-    _client_instance = None
+    """Force re-creation of the clients (e.g., after .env changes in tests)."""
+    global _client_instances
+    _client_instances.clear()

@@ -93,6 +93,7 @@ class CVWorker:
 
         self._stop_event = threading.Event()
         self._thread: Optional[threading.Thread] = None
+        self._cap: Optional[cv2.VideoCapture] = None
 
         # Pipeline components (initialized in _setup)
         self._detector: Optional[FaceDetectorEmbedder] = None
@@ -123,8 +124,17 @@ class CVWorker:
         """Signal the worker to stop and wait for thread cleanup."""
         logger.info(f"[CVWorker] Stop requested for classroom {self.classroom_id}.")
         self._stop_event.set()
+        
+        # Release the capture device from the main thread to unblock the read() call
+        if hasattr(self, "_cap") and self._cap:
+            try:
+                logger.info(f"[CVWorker] Releasing VideoCapture from stop() to break block...")
+                self._cap.release()
+            except Exception as e:
+                logger.error(f"[CVWorker] Error releasing cap in stop(): {e}")
+
         if self._thread and self._thread.is_alive():
-            self._thread.join(timeout=10.0)
+            self._thread.join(timeout=5.0)
         logger.info(f"[CVWorker] Thread stopped for classroom {self.classroom_id}.")
 
     def is_running(self) -> bool:
@@ -136,11 +146,11 @@ class CVWorker:
 
     def _run(self) -> None:
         """Main processing loop — runs in the background thread."""
-        cap = None
+        self._cap = None
         try:
             self._setup_pipeline()
-            cap = self._open_camera()
-            if cap is None:
+            self._cap = self._open_camera()
+            if self._cap is None:
                 logger.error(
                     f"[CVWorker] Failed to open camera '{self.camera_source}'. "
                     "Worker exiting."
@@ -151,7 +161,9 @@ class CVWorker:
             logger.info(f"[CVWorker] Video stream open. Processing frames...")
 
             while not self._stop_event.is_set():
-                ret, frame = cap.read()
+                if self._cap is None:
+                    break
+                ret, frame = self._cap.read()
                 if not ret:
                     logger.warning("[CVWorker] Frame read failed. Retrying...")
                     time.sleep(0.1)
@@ -169,8 +181,12 @@ class CVWorker:
         except Exception as e:
             logger.error(f"[CVWorker] Fatal error: {e}", exc_info=True)
         finally:
-            if cap:
-                cap.release()
+            if self._cap:
+                try:
+                    self._cap.release()
+                except Exception as e:
+                    logger.error(f"[CVWorker] Error releasing cap in finally: {e}")
+                self._cap = None
             self._teardown_pipeline()
             logger.info(f"[CVWorker] Cleanup complete for classroom {self.classroom_id}.")
 
@@ -380,15 +396,28 @@ class CVWorker:
 
     def _open_camera(self) -> Optional[cv2.VideoCapture]:
         """Open the video source. Returns None on failure."""
+        import os
         source = self.camera_source
+        
+        # Allow environment override for easy camera index selection (e.g. laptop vs external webcam)
+        env_override = os.getenv("WEBCAM_INDEX")
+        if env_override is not None:
+            source = env_override
+            logger.info(f"[CVWorker] Overriding camera source with WEBCAM_INDEX environment variable: {source}")
+
         # Convert string integer to int for webcam index
+        cap = None
         try:
             source = int(source)
+            import platform
+            if platform.system().lower() == "windows":
+                cap = cv2.VideoCapture(source, cv2.CAP_DSHOW)
+            else:
+                cap = cv2.VideoCapture(source)
         except (ValueError, TypeError):
-            pass  # Keep as string for RTSP/file paths
+            cap = cv2.VideoCapture(source)  # Keep as string for RTSP/file paths
 
-        cap = cv2.VideoCapture(source)
-        if not cap.isOpened():
+        if cap is None or not cap.isOpened():
             return None
 
         # Set resolution for 1080p webcam

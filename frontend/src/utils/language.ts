@@ -143,6 +143,12 @@ export const translations = {
     enrollments: 'Enrollments',
     enrolledDate: 'Enrolled',
     areYouSureDeleteCourse: 'Are you sure you want to delete this course?',
+    psychologistReport: 'School Psychologist Case Report',
+    rawReportPlaceholder: 'Enter psychologist/counselor case history, mental health status, or learning capacity notes...',
+    aiSummary: 'AI-Generated Case Summary',
+    saveAndSummarize: 'Save & Summarize',
+    summarizing: 'Saving & Summarizing...',
+    noReportYet: 'No psychologist report registered yet.',
   },
   ar: {
     // Auth
@@ -262,6 +268,12 @@ export const translations = {
     enrollments: 'التسجيلات',
     enrolledDate: 'تاريخ التسجيل',
     areYouSureDeleteCourse: 'هل أنت متأكد من حذف هذه الدورة؟',
+    psychologistReport: 'تقرير الأخصائي النفسي للمدرسة',
+    rawReportPlaceholder: 'أدخل تفاصيل التقرير النفسي، الصحة النفسية، أو قدرات التعلم للطالب...',
+    aiSummary: 'ملخص الذكاء الاصطناعي للحالة',
+    saveAndSummarize: 'حفظ وتلخيص',
+    summarizing: 'جاري الحفظ والتلخيص...',
+    noReportYet: 'لا يوجد تقرير أخصائي نفسي مسجل بعد.',
   },
 };
 

@@ -27,7 +27,10 @@ class User(Base):
     is_deleted = Column(Boolean, default=False)  # Soft delete flag
     deleted_at = Column(DateTime(timezone=True), nullable=True)  # When was the user deleted
     school_id = Column(Integer, ForeignKey("schools.id"), nullable=True)  # null = platform-only user
+    nfc_tag_id = Column(String, unique=True, nullable=True)  # Used for physical NFC card registration
     persona_profile = Column(Text, nullable=True)  # JSON blob of global traits (learning_style, tone, etc)
+    counselor_report = Column(Text, nullable=True)  # School psychologist/counselor case report
+    counselor_report_summary = Column(Text, nullable=True)  # AI-generated summary of psychologist case report
 
     # Parent relationships
     children = relationship(
@@ -178,6 +181,7 @@ class TeacherNote(Base):
     topic_tags = Column(String, nullable=True) # e.g. "Math", "Fractions"
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
+
     student = relationship("User")
 
 
@@ -192,6 +196,22 @@ class LessonProgress(Base):
     
     user = relationship("User")
     lesson = relationship("Lesson")
+
+
+class AttendanceRecord(Base):
+    """
+    Logs physical classroom attendance via NFC or manual entry.
+    """
+    __tablename__ = "attendance_records"
+
+    id = Column(Integer, primary_key=True, index=True)
+    student_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    classroom_id = Column(Integer, ForeignKey("physical_classrooms.id"), nullable=False)
+    timestamp = Column(DateTime(timezone=True), server_default=func.now())
+    status = Column(String, default="present")  # 'present', 'late', 'absent'
+
+    student = relationship("User")
+    classroom = relationship("PhysicalClassroom")
 
 
 # =============================================================================
@@ -332,17 +352,22 @@ class CVSession(Base):
     id = Column(Integer, primary_key=True, index=True)
     classroom_id = Column(Integer, ForeignKey("physical_classrooms.id"), nullable=False)
     session_type = Column(String, default="class")  # 'class' | 'exam'
-    teacher_id = Column(Integer, ForeignKey("users.id"), nullable=True)
-    subject_name = Column(String, nullable=True)
     started_at = Column(DateTime(timezone=True), server_default=func.now())
     ended_at = Column(DateTime(timezone=True), nullable=True)
     started_by = Column(Integer, ForeignKey("users.id"), nullable=True)
     summary_json = Column(Text, nullable=True)  # JSON analytics blob saved on stop
+    
+    teacher_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    course_id = Column(Integer, ForeignKey("courses.id"), nullable=True)
+    lesson_id = Column(Integer, ForeignKey("lessons.id"), nullable=True)
 
     classroom = relationship("PhysicalClassroom", back_populates="cv_sessions")
     started_by_user = relationship("User", foreign_keys=[started_by])
     teacher = relationship("User", foreign_keys=[teacher_id])
+    course = relationship("Course")
+    lesson = relationship("Lesson")
     focus_events = relationship("FocusEvent", back_populates="session", cascade="all, delete-orphan")
+
 
 
 class FocusEvent(Base):
@@ -370,6 +395,50 @@ class FocusEvent(Base):
     session = relationship("CVSession", back_populates="focus_events")
     student = relationship("User", foreign_keys=[student_id])
 
+
+class Classwork(Base):
+    """
+    Represents an assignment, pdf, video or homework added by a teacher to a course.
+    """
+    __tablename__ = "classwork"
+
+    id = Column(Integer, primary_key=True, index=True)
+    course_id = Column(Integer, ForeignKey("courses.id"), nullable=False)
+    title = Column(String, nullable=False)
+    description = Column(Text, nullable=True)
+    classwork_type = Column(String, nullable=False)  # 'video', 'pdf', 'homework', 'quiz', 'document'
+    resource_url = Column(String, nullable=True)  # Link to attached resource
+    max_grade = Column(Integer, nullable=True)
+    due_date = Column(String, nullable=True)  # Due date (ISO string or human readable)
+    timer_minutes = Column(Integer, nullable=True)  # Quiz timer limit
+    quiz_questions_json = Column(Text, nullable=True)  # JSON representation of quiz questions
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    course = relationship("Course")
+    submissions = relationship("ClassworkSubmission", back_populates="classwork", cascade="all, delete-orphan")
+
+
+
+class ClassworkSubmission(Base):
+    """
+    Tracks students' completion of classwork, including PDF uploads for homework.
+    """
+    __tablename__ = "classwork_submissions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    classwork_id = Column(Integer, ForeignKey("classwork.id"), nullable=False)
+    student_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    completed = Column(Boolean, default=False)
+    submission_file_url = Column(String, nullable=True)  # Path to uploaded solution file (e.g., PDF)
+    answers_json = Column(Text, nullable=True)  # JSON representation of student answers for quizzes
+    submitted_at = Column(DateTime(timezone=True), server_default=func.now())
+    grade = Column(Float, nullable=True)  # Grade assigned by teacher (optional)
+
+    classwork = relationship("Classwork", back_populates="submissions")
+    student = relationship("User")
+
+
+
 class ActiveLearningSession(Base):
     __tablename__ = "active_learning_sessions"
 
@@ -384,3 +453,23 @@ class ActiveLearningSession(Base):
 
     user = relationship("User")
     lesson = relationship("Lesson")
+
+
+class ClassroomMessage(Base):
+    """
+    Direct messages and broadcasts between students and teachers for physical classrooms.
+    """
+    __tablename__ = "classroom_messages"
+
+    id = Column(Integer, primary_key=True, index=True)
+    classroom_id = Column(Integer, ForeignKey("physical_classrooms.id"), nullable=False)
+    sender_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    # Null student_id = Broadcast announcement to all students in the classroom
+    student_id = Column(Integer, ForeignKey("users.id"), nullable=True) 
+    message = Column(Text, nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    classroom = relationship("PhysicalClassroom")
+    sender = relationship("User", foreign_keys=[sender_id])
+    student = relationship("User", foreign_keys=[student_id])
+

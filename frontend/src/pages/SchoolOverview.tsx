@@ -4,6 +4,7 @@ import { api } from '@/utils/api';
 import { School, Users, Camera, Activity, Play, Settings } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { TrackingConfigModal } from '@/components/TrackingConfigModal';
+import { Layout } from '@/components/layout/Layout';
 
 export function SchoolOverview() {
   const navigate = useNavigate();
@@ -12,20 +13,67 @@ export function SchoolOverview() {
   const [configModalOpen, setConfigModalOpen] = useState(false);
   const [selectedClassroom, setSelectedClassroom] = useState<any>(null);
 
-  const fetchData = async () => {
+  // Scoped multi-school states:
+  const [schools, setSchools] = useState<any[]>([]);
+  const [activeSchoolId, setActiveSchoolId] = useState<number | null>(null);
+
+  const userString = localStorage.getItem('user');
+  const user = userString ? JSON.parse(userString) : null;
+  const isSuperAdmin = user?.role === 'super_admin';
+
+  const fetchClassrooms = async (schoolId: number) => {
     try {
-      const response = await api.getClassrooms(1);
+      const response = await api.getClassrooms(schoolId);
       setClassrooms(response.data);
     } catch (error) {
       console.error("Error fetching classrooms:", error);
+    }
+  };
+
+  const fetchInitialData = async () => {
+    try {
+      setLoading(true);
+      if (isSuperAdmin) {
+        const schoolsResponse = await api.getSchools();
+        setSchools(schoolsResponse.data);
+        if (schoolsResponse.data.length > 0) {
+          const firstSchoolId = schoolsResponse.data[0].id;
+          setActiveSchoolId(firstSchoolId);
+          await fetchClassrooms(firstSchoolId);
+        }
+      } else {
+        const targetSchoolId = user?.school_id || 1;
+        setActiveSchoolId(targetSchoolId);
+        await fetchClassrooms(targetSchoolId);
+      }
+    } catch (error) {
+      console.error("Error fetching school overview data:", error);
     } finally {
       setLoading(false);
     }
   };
 
   useEffect(() => {
-    fetchData();
+    fetchInitialData();
   }, []);
+
+  const fetchData = async () => {
+    if (activeSchoolId !== null) {
+      await fetchClassrooms(activeSchoolId);
+    }
+  };
+
+  const handleSchoolChange = async (schoolId: number) => {
+    try {
+      setLoading(true);
+      setActiveSchoolId(schoolId);
+      await fetchClassrooms(schoolId);
+    } catch (error) {
+      console.error("Error changing school:", error);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const handleStartSession = async (classroomId: number) => {
     try {
@@ -43,16 +91,35 @@ export function SchoolOverview() {
   };
 
   return (
-    <div className="min-h-screen bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-gray-100 p-8">
-      <div className="max-w-7xl mx-auto">
-        <header className="mb-12">
-          <h1 className="text-4xl font-extrabold tracking-tight flex items-center gap-4">
-            <School className="w-10 h-10 text-indigo-500" />
-            School Campus Overview
-          </h1>
-          <p className="text-gray-500 dark:text-gray-400 mt-2 text-lg">
-            Manage your physical classrooms and initiate real-time AI monitoring sessions.
-          </p>
+    <Layout>
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 text-gray-900 dark:text-gray-100">
+        <header className="mb-12 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+          <div>
+            <h1 className="text-4xl font-extrabold tracking-tight flex items-center gap-4">
+              <School className="w-10 h-10 text-indigo-500" />
+              {isSuperAdmin ? "Super Admin Campus Overview" : "School Campus Overview"}
+            </h1>
+            <p className="text-gray-500 dark:text-gray-400 mt-2 text-lg">
+              Manage physical classrooms and initiate real-time AI monitoring sessions.
+            </p>
+          </div>
+
+          {isSuperAdmin && schools.length > 0 && (
+            <div className="flex items-center gap-2 bg-white dark:bg-gray-800 p-2.5 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm">
+              <span className="text-sm font-semibold text-gray-500 dark:text-gray-400">School:</span>
+              <select
+                value={activeSchoolId || ''}
+                onChange={(e) => handleSchoolChange(Number(e.target.value))}
+                className="bg-transparent border-none outline-none font-bold text-indigo-600 dark:text-indigo-400 cursor-pointer"
+              >
+                {schools.map((s) => (
+                  <option key={s.id} value={s.id} className="text-gray-900 dark:text-gray-100 bg-white dark:bg-gray-800">
+                    {s.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
         </header>
 
         {loading ? (
@@ -125,6 +192,6 @@ export function SchoolOverview() {
         classroom={selectedClassroom}
         onSaved={fetchData}
       />
-    </div>
+    </Layout>
   );
 }

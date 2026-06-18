@@ -12,7 +12,14 @@ import {
   HelpCircle, // Icon for Quiz Tab
   MessageSquare, // Icon for Chat Tab
   Sparkles,
-  RefreshCw
+  RefreshCw,
+  Camera,
+  Mic,
+  MicOff,
+  Volume2,
+  VolumeX,
+  X,
+  PlayCircle
 } from 'lucide-react';
 import ReactPlayer from 'react-player';
 
@@ -42,6 +49,7 @@ interface Message {
   helpful?: boolean;
   type?: 'text' | 'quiz_widget';
   data?: any;
+  audioBase64?: string;
 }
 
 interface QuizQuestion {
@@ -93,12 +101,34 @@ export const Lesson = () => {
   const [quizScore, setQuizScore] = useState<number | null>(null);
   const [sessionStarted, setSessionStarted] = useState(false);
   const [videoProgress, setVideoProgress] = useState(0);
-  const chatEndRef = useRef<HTMLDivElement>(null);
+  const chatContainerRef = useRef<HTMLDivElement>(null);
+  
+  // Multimodal states & refs
+  const [selectedImage, setSelectedImage] = useState<File | null>(null);
+  const [imagePreview, setImagePreview] = useState<string | null>(null);
+  const [isRecording, setIsRecording] = useState(false);
+  const [recordingDuration, setRecordingDuration] = useState(0);
+  const [voiceOutputEnabled, setVoiceOutputEnabled] = useState(false);
+  const [recordedAudioBlob, setRecordedAudioBlob] = useState<Blob | null>(null);
+
+  const imageInputRef = useRef<HTMLInputElement>(null);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
+  const recordingIntervalRef = useRef<any>(null);
+  const currentAudioRef = useRef<HTMLAudioElement | null>(null);
+
   const { language } = useLanguage();
   const navigate = useNavigate();
 
   const [activeQuiz, setActiveQuiz] = useState<QuizData | null>(null);
   const [isGeneratingQuiz, setIsGeneratingQuiz] = useState(false);
+  const [modelBackend, setModelBackend] = useState<'ollama' | 'gemini'>(() => {
+    return (localStorage.getItem('modelBackend') as 'ollama' | 'gemini') || 'ollama';
+  });
+
+  useEffect(() => {
+    localStorage.setItem('modelBackend', modelBackend);
+  }, [modelBackend]);
 
   // Track session time every 10 seconds
   useEffect(() => {
@@ -122,8 +152,26 @@ export const Lesson = () => {
   }, [id]);
 
   useEffect(() => {
-    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [chatMessages]);
+    if (chatContainerRef.current) {
+      chatContainerRef.current.scrollTo({
+        top: chatContainerRef.current.scrollHeight,
+        behavior: 'smooth'
+      });
+    }
+  }, [chatMessages, activeLearningMessages]);
+
+  useEffect(() => {
+    return () => {
+      if (currentAudioRef.current) {
+        currentAudioRef.current.pause();
+        currentAudioRef.current = null;
+      }
+      if (recordingIntervalRef.current) {
+        clearInterval(recordingIntervalRef.current);
+        recordingIntervalRef.current = null;
+      }
+    };
+  }, []);
 
   const loadLesson = async () => {
     try {
@@ -150,7 +198,7 @@ export const Lesson = () => {
     setActiveTab('quiz');
 
     try {
-      const response = await api.generateQuiz(id!);
+      const response = await api.generateQuiz(id!, modelBackend);
       const backendQuiz = response.data;
 
       const formattedQuiz: QuizData = {
@@ -196,7 +244,7 @@ export const Lesson = () => {
     if (newMode && activeLearningMessages.length === 0) {
       setIsChatLoading(true);
       try {
-        const res = await api.startActiveLearning(lesson.id);
+        const res = await api.startActiveLearning(lesson.id, modelBackend);
         setActiveLearningMessages([{
           id: Date.now().toString(),
           role: 'assistant',
@@ -211,22 +259,123 @@ export const Lesson = () => {
     }
   };
 
-  const handleSendMessage = async () => {
-    if (!chatInput.trim() || isChatLoading || !lesson) return;
+  // Audio playback, recording, and image helpers
+  const playBase64Audio = (base64Str: string) => {
+    try {
+      if (currentAudioRef.current) {
+        currentAudioRef.current.pause();
+        currentAudioRef.current = null;
+      }
+      const binaryString = window.atob(base64Str);
+      const len = binaryString.length;
+      const bytes = new Uint8Array(len);
+      for (let i = 0; i < len; i++) {
+        bytes[i] = binaryString.charCodeAt(i);
+      }
+      const blob = new Blob([bytes.buffer], { type: 'audio/wav' });
+      const audioUrl = URL.createObjectURL(blob);
+      const audio = new Audio(audioUrl);
+      currentAudioRef.current = audio;
+      audio.play().catch(e => console.error("Audio playback failed:", e));
+    } catch (err) {
+      console.error("Failed to play base64 audio", err);
+    }
+  };
 
-    const userMessage: Message = {
-      id: Date.now().toString(),
-      role: 'user',
-      content: chatInput,
-      timestamp: new Date(),
-    };
+  const handleImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      setSelectedImage(file);
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        setImagePreview(reader.result as string);
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
+  const clearSelectedImage = () => {
+    setSelectedImage(null);
+    setImagePreview(null);
+    if (imageInputRef.current) {
+      imageInputRef.current.value = '';
+    }
+  };
+
+  const startRecording = async () => {
+    try {
+      if (currentAudioRef.current) {
+        currentAudioRef.current.pause();
+        currentAudioRef.current = null;
+      }
+
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const mediaRecorder = new MediaRecorder(stream);
+      mediaRecorderRef.current = mediaRecorder;
+      audioChunksRef.current = [];
+
+      mediaRecorder.ondataavailable = (event) => {
+        if (event.data.size > 0) {
+          audioChunksRef.current.push(event.data);
+        }
+      };
+
+      mediaRecorder.onstop = () => {
+        const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
+        setRecordedAudioBlob(audioBlob);
+        stream.getTracks().forEach((track) => track.stop());
+      };
+
+      mediaRecorder.start();
+      setIsRecording(true);
+      setRecordingDuration(0);
+
+      recordingIntervalRef.current = setInterval(() => {
+        setRecordingDuration((prev) => prev + 1);
+      }, 1000);
+    } catch (err) {
+      console.error("Failed to start recording:", err);
+      alert(language === 'ar' ? 'فشل الوصول إلى الميكروفون' : 'Failed to access microphone');
+    }
+  };
+
+  const stopRecording = () => {
+    if (mediaRecorderRef.current && isRecording) {
+      mediaRecorderRef.current.stop();
+      setIsRecording(false);
+      if (recordingIntervalRef.current) {
+        clearInterval(recordingIntervalRef.current);
+        recordingIntervalRef.current = null;
+      }
+    }
+  };
+
+  const clearRecordedAudio = () => {
+    setRecordedAudioBlob(null);
+  };
+
+  const handleSendMessage = async () => {
+    if (isChatLoading || !lesson) return;
+
+    const hasText = !!chatInput.trim();
+    const hasImage = !!selectedImage;
+    const hasAudio = !!recordedAudioBlob;
+
+    if (!hasText && !hasImage && !hasAudio) return;
 
     if (isActiveLearning) {
+      if (!hasText) return;
+      const userMessage: Message = {
+        id: Date.now().toString(),
+        role: 'user',
+        content: chatInput,
+        timestamp: new Date(),
+      };
       setActiveLearningMessages((prev) => [...prev, userMessage]);
       setChatInput('');
       setIsChatLoading(true);
       try {
-        const response = await api.sendActiveLearningMessage(lesson.id, userMessage.content);
+        const response = await api.sendActiveLearningMessage(lesson.id, userMessage.content, modelBackend);
         const assistantMessage: Message = {
           id: (Date.now() + 1).toString(),
           role: 'assistant',
@@ -244,12 +393,44 @@ export const Lesson = () => {
       return;
     }
 
+    // Multimodal chat
+    let userMessageContent = chatInput;
+    if (hasImage && !hasText) {
+      userMessageContent = language === 'ar' ? "📷 تم إرسال صورة" : "📷 Sent an image";
+    } else if (hasAudio && !hasText) {
+      userMessageContent = language === 'ar' ? "🎤 تم إرسال رسالة صوتية" : "🎤 Sent a voice note";
+    } else if (hasImage && hasText) {
+      userMessageContent = `📷 [${language === 'ar' ? 'صورة مرفقة' : 'Image Attached'}] ${chatInput}`;
+    }
+
+    const userMessage: Message = {
+      id: Date.now().toString(),
+      role: 'user',
+      content: userMessageContent,
+      timestamp: new Date(),
+    };
+
     setChatMessages((prev) => [...prev, userMessage]);
     setChatInput('');
+    
+    const tempImage = selectedImage;
+    const tempAudio = recordedAudioBlob;
+    
+    setSelectedImage(null);
+    setImagePreview(null);
+    setRecordedAudioBlob(null);
     setIsChatLoading(true);
 
     try {
-      const response = await api.sendChatMessage(lesson.id, chatInput);
+      const response = await api.sendMultimodalChat(
+        lesson.id,
+        chatInput,
+        tempImage,
+        tempAudio,
+        voiceOutputEnabled,
+        modelBackend
+      );
+      
       const responseData = response.data;
       const assistantMessage: Message = {
         id: (Date.now() + 1).toString(),
@@ -257,9 +438,15 @@ export const Lesson = () => {
         content: responseData.message || "",
         timestamp: new Date(),
         type: responseData.type || 'text',
-        data: responseData.data || null
+        data: responseData.data || null,
+        audioBase64: responseData.audio_base64 || undefined
       };
+      
       setChatMessages((prev) => [...prev, assistantMessage]);
+
+      if (voiceOutputEnabled && responseData.audio_base64) {
+        playBase64Audio(responseData.audio_base64);
+      }
     } catch (err: any) {
       const errorMessage: Message = {
         id: (Date.now() + 1).toString(),
@@ -617,24 +804,26 @@ export const Lesson = () => {
             {/* ========================================================= */}
             {activeTab === 'chat' && (
               <Card padding="none" className="flex flex-col h-[600px]">
-                <div className="p-4 border-b border-gray-200 dark:border-gray-700 flex justify-between items-center bg-gray-50 dark:bg-gray-800/50">
+                <div className="p-4 border-b border-gray-200 dark:border-gray-700 flex justify-between items-center bg-gray-50/50 dark:bg-gray-800/50">
                   <h2 className="text-lg font-semibold text-gray-900 dark:text-white flex items-center gap-2">
-                    {isActiveLearning ? <Sparkles className="w-5 h-5 text-purple-500" /> : <MessageSquare className="w-5 h-5 text-blue-500" />}
+                    {isActiveLearning ? <Sparkles className="h-5 w-5 text-purple-500 animate-pulse" /> : <MessageSquare className="h-5 w-5 text-blue-500" />}
                     {isActiveLearning ? "Active Learning Mode" : t('studyAssistant' as any, language)}
                   </h2>
-                  <button 
-                    onClick={toggleActiveLearning}
-                    className={`px-3 py-1 text-sm font-medium rounded-full transition-colors ${
-                      isActiveLearning 
-                        ? 'bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-300 border border-purple-200 dark:border-purple-800' 
-                        : 'bg-gray-200 text-gray-700 dark:bg-gray-700 dark:text-gray-300 hover:bg-gray-300 dark:hover:bg-gray-600'
-                    }`}
-                  >
-                    {isActiveLearning ? "Exit Active Mode" : "Start Active Learning"}
-                  </button>
+                  <div className="flex items-center gap-3">
+                    <button 
+                      onClick={toggleActiveLearning}
+                      className={`px-3 py-1.5 text-xs font-semibold rounded-full transition-all border ${
+                        isActiveLearning 
+                          ? 'bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-300 border-purple-200 dark:border-purple-800 shadow-sm' 
+                          : 'bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300 border-gray-200 dark:border-gray-700 hover:bg-gray-200 dark:hover:bg-gray-700 hover:border-gray-300 shadow-sm'
+                      }`}
+                    >
+                      {isActiveLearning ? "Exit Active Mode" : "Start Active Learning"}
+                    </button>
+                    {/* Model switcher removed here, now placed in the global sidebar card */}
+                  </div>
                 </div>
-                
-                <div className={`flex-1 overflow-y-auto p-4 space-y-4 ${isActiveLearning ? 'bg-purple-50/30 dark:bg-purple-900/10' : ''}`}>
+                <div ref={chatContainerRef} className={`flex-1 overflow-y-auto p-4 space-y-4 ${isActiveLearning ? 'bg-purple-50/10 dark:bg-purple-950/5' : ''}`}>
                   {!isActiveLearning && chatMessages.length === 0 && (
                     <div className="text-center text-gray-500 dark:text-gray-400 py-8">
                       {t('askQuestion', language)}
@@ -643,11 +832,10 @@ export const Lesson = () => {
                   {isActiveLearning && activeLearningMessages.length === 0 && (
                     <div className="text-center py-8">
                       <Sparkles className="w-8 h-8 text-purple-400 mx-auto mb-3 animate-pulse" />
-                      <p className="text-purple-600 dark:text-purple-400 font-medium">Starting your personalized lesson flow...</p>
+                      <p className="text-purple-650 dark:text-purple-400 font-semibold text-sm">Starting your personalized lesson flow...</p>
                     </div>
                   )}
-                  
-                  {(isActiveLearning ? activeLearningMessages : chatMessages).map((message) => (
+                  {((isActiveLearning ? activeLearningMessages : chatMessages) || []).map((message) => (
                     <div key={message.id} className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}>
                       <div className={`max-w-[80%] rounded-lg p-3 ${message.role === 'user' ? 'bg-blue-500 text-white' : 'bg-gray-100 dark:bg-gray-700 text-gray-900 dark:text-white'
                         }`}>
@@ -750,7 +938,16 @@ export const Lesson = () => {
                           </div>
                         )}
                         {message.role === 'assistant' && (
-                          <div className="flex gap-2 mt-2">
+                          <div className="flex gap-2 mt-2 items-center">
+                            {message.audioBase64 && (
+                              <button
+                                onClick={() => playBase64Audio(message.audioBase64!)}
+                                className="p-1 rounded hover:bg-gray-205 dark:hover:bg-gray-600 text-blue-500"
+                                title={language === 'ar' ? 'إعادة تشغيل الصوت' : 'Replay audio'}
+                              >
+                                <Volume2 className="h-3 w-3" />
+                              </button>
+                            )}
                             <button
                               onClick={() => handleFeedback(message.id, true)}
                               className={`p-1 rounded ${message.helpful === true
@@ -783,24 +980,139 @@ export const Lesson = () => {
                       </div>
                     </div>
                   )}
-                  <div ref={chatEndRef} />
+
                 </div>
                 <div className="p-4 border-t border-gray-200 dark:border-gray-700">
-                  <div className="flex gap-2">
-                    <Input
-                      value={chatInput}
-                      onChange={(e) => setChatInput(e.target.value)}
-                      onKeyPress={(e) => e.key === 'Enter' && handleSendMessage()}
-                      placeholder={t('askQuestion', language)}
-                      disabled={isChatLoading}
-                      className="flex-1"
-                    />
-                    <Button
-                      onClick={handleSendMessage}
-                      disabled={isChatLoading || !chatInput.trim()}
-                    >
-                      <Send className="h-4 w-4" />
-                    </Button>
+                  {/* Previews for attached media */}
+                  {(imagePreview || recordedAudioBlob) && (
+                    <div className="flex flex-wrap gap-3 mb-3 p-2 bg-gray-50 dark:bg-gray-800/40 rounded-lg border border-gray-100 dark:border-gray-700/50">
+                      {imagePreview && (
+                        <div className="relative group w-16 h-16 rounded border border-gray-200 dark:border-gray-700 overflow-hidden bg-black/5 flex items-center justify-center">
+                          <img src={imagePreview} alt="Preview" className="max-w-full max-h-full object-cover" />
+                          <button
+                            type="button"
+                            onClick={clearSelectedImage}
+                            className="absolute top-0.5 right-0.5 p-1 bg-black/60 hover:bg-black/85 text-white rounded-full transition-colors"
+                            title="Remove image"
+                          >
+                            <X className="h-3 w-3" />
+                          </button>
+                        </div>
+                      )}
+                      
+                      {recordedAudioBlob && (
+                        <div className="relative flex items-center gap-2 px-3 py-2 bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300 rounded border border-blue-150 dark:border-blue-800/40 text-xs font-semibold">
+                          <PlayCircle className="h-4 w-4 animate-pulse" />
+                          <span>
+                            {language === 'ar' ? 'مسجل صوتي جاهز' : 'Voice message ready'}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={clearRecordedAudio}
+                            className="p-0.5 bg-blue-200 hover:bg-blue-300 dark:bg-blue-900/60 dark:hover:bg-blue-800 text-blue-700 dark:text-blue-300 rounded-full transition-colors ml-1"
+                            title="Remove audio"
+                          >
+                            <X className="h-3 w-3" />
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Hidden image input */}
+                  <input
+                    type="file"
+                    accept="image/*"
+                    ref={imageInputRef}
+                    onChange={handleImageChange}
+                    className="hidden"
+                  />
+
+                  <div className="flex gap-2 items-center">
+                    {isRecording ? (
+                      <div className="flex-1 flex items-center justify-between bg-red-50 dark:bg-red-950/20 border border-red-200 dark:border-red-900/40 rounded-lg px-4 py-2 text-sm text-red-600 dark:text-red-400">
+                        <div className="flex items-center gap-2">
+                          <span className="w-2 h-2 rounded-full bg-red-500 animate-ping"></span>
+                          <span className="font-semibold">
+                            {language === 'ar' ? 'جاري التسجيل...' : 'Recording...'}
+                          </span>
+                          <span className="font-mono bg-red-100 dark:bg-red-900/40 px-2 py-0.5 rounded text-xs">
+                            {Math.floor(recordingDuration / 60)}:{(recordingDuration % 60).toString().padStart(2, '0')}
+                          </span>
+                        </div>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={stopRecording}
+                          className="border-red-200 hover:bg-red-100 text-red-600 dark:border-red-900 dark:hover:bg-red-950"
+                        >
+                          <MicOff className="h-4 w-4 mr-1.5" />
+                          {language === 'ar' ? 'إيقاف' : 'Stop'}
+                        </Button>
+                      </div>
+                    ) : (
+                      <>
+                        {/* Camera/Photo button (only in standard chat) */}
+                        {!isActiveLearning && (
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            onClick={() => imageInputRef.current?.click()}
+                            disabled={isChatLoading}
+                            title={language === 'ar' ? 'إرفاق صورة' : 'Attach image'}
+                          >
+                            <Camera className="h-4 w-4 text-gray-500 dark:text-gray-400" />
+                          </Button>
+                        )}
+
+                        {/* Mic button (only in standard chat) */}
+                        {!isActiveLearning && (
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            onClick={startRecording}
+                            disabled={isChatLoading}
+                            title={language === 'ar' ? 'تسجيل صوتي' : 'Record audio'}
+                          >
+                            <Mic className="h-4 w-4 text-gray-500 dark:text-gray-400" />
+                          </Button>
+                        )}
+
+                        {/* Speaker toggle */}
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={() => setVoiceOutputEnabled(!voiceOutputEnabled)}
+                          disabled={isChatLoading}
+                          title={voiceOutputEnabled ? (language === 'ar' ? 'إيقاف نطق الإجابة' : 'Disable voice reply') : (language === 'ar' ? 'تفعيل نطق الإجابة' : 'Enable voice reply')}
+                          className={voiceOutputEnabled ? 'bg-blue-50 dark:bg-blue-950/40 border-blue-200 dark:border-blue-800' : ''}
+                        >
+                          {voiceOutputEnabled ? (
+                            <Volume2 className="h-4 w-4 text-blue-500 dark:text-blue-400" />
+                          ) : (
+                            <VolumeX className="h-4 w-4 text-gray-500 dark:text-gray-400" />
+                          )}
+                        </Button>
+
+                        <Input
+                          value={chatInput}
+                          onChange={(e) => setChatInput(e.target.value)}
+                          onKeyPress={(e) => e.key === 'Enter' && handleSendMessage()}
+                          placeholder={t('askQuestion', language)}
+                          disabled={isChatLoading}
+                          className="flex-1"
+                        />
+                        <Button
+                          onClick={handleSendMessage}
+                          disabled={isChatLoading || (!chatInput.trim() && !selectedImage && !recordedAudioBlob)}
+                        >
+                          <Send className="h-4 w-4" />
+                        </Button>
+                      </>
+                    )}
                   </div>
                 </div>
               </Card>
@@ -809,6 +1121,28 @@ export const Lesson = () => {
 
           {/* Sidebar */}
           <div className="space-y-4">
+            <Card>
+              <h3 className="font-semibold text-gray-900 dark:text-white mb-3 flex items-center gap-2">
+                <Sparkles className="h-4 w-4 text-purple-500 animate-pulse" />
+                AI Tutor Engine
+              </h3>
+              <div className="space-y-2">
+                <div className="flex flex-col gap-1.5">
+                  <span className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">
+                    Applies to Chat, Active Learning, and Quizzes.
+                  </span>
+                  <select
+                    value={modelBackend}
+                    onChange={(e) => setModelBackend(e.target.value as 'ollama' | 'gemini')}
+                    className="w-full text-xs bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-md px-2.5 py-1.5 text-gray-700 dark:text-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 font-semibold shadow-sm transition-all hover:border-gray-300 dark:hover:border-gray-600 cursor-pointer"
+                  >
+                    <option value="ollama">Local Qwen (Ollama)</option>
+                    <option value="gemini">Gemma 4 31B (Cloud API)</option>
+                  </select>
+                </div>
+              </div>
+            </Card>
+
             <Card>
               <h3 className="font-semibold text-gray-900 dark:text-white mb-3">
                 {t('lesson', language)} {t('navigation', language)}

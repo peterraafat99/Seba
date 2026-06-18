@@ -32,3 +32,8 @@ bge_m3_local/
 # OS files
 .DS_Store
 Thumbs.db
+
+# Project uploaded media and scratch directories
+backend/uploads/
+backend/scratch/
+Seba-main/

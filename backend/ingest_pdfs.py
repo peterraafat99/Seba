@@ -6,9 +6,11 @@ from sqlalchemy.orm import sessionmaker
 from models import Base, Course, Lesson 
 
 # Configuration
-PDF_ROOT = "./curriculum_pdfs"
-RAG_DB_FILE = "rag_content.db"
-RAG_DB_URL = f"sqlite:///./{RAG_DB_FILE}"
+db_dir = os.path.dirname(os.path.abspath(__file__))
+PDF_ROOT = os.path.join(db_dir, "curriculum_pdfs")
+RAG_DB_FILE = os.path.join(db_dir, "rag_content.db")
+RAG_DB_URL = f"sqlite:///{RAG_DB_FILE}"
+
 
 def clean_extracted_text(text):
     text = re.sub(r'(\w+)-\n(\w+)', r'\1\2', text)
@@ -17,7 +19,6 @@ def clean_extracted_text(text):
     text = re.sub(r'√', r'sqrt(', text)
     text = text.replace(" ̸=", " not_equal ")
     text = re.sub(r'(are)(integers)', r'\1 \2', text)
-    text = text.replace("", "")
     text = re.sub(r'\s+', ' ', text).strip()
     text = re.sub(r'([a-zA-Z])([23])(?![0-9])', r'\1^\2', text)
     return text

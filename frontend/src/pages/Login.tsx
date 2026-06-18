@@ -12,7 +12,7 @@ import { useLanguage } from '@/contexts/LanguageContext';
 export const Login = () => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [selectedRole, setSelectedRole] = useState<'student' | 'teacher' | 'parent'>('student');
+  const [selectedRole, setSelectedRole] = useState<'student' | 'teacher' | 'parent' | 'admin'>('student');
   const [rememberMe, setRememberMe] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -28,8 +28,17 @@ export const Login = () => {
       const response = await api.login(email, password);
 
       // Verify role matches selected tab (optional UX enforcement)
-      if (response.user && response.user.role !== selectedRole) {
-        setError(`This account is registered as a ${response.user.role}. Please switch tabs.`);
+      const isRoleMatched = () => {
+        if (!response.user) return false;
+        const role = response.user.role;
+        if (selectedRole === 'admin') {
+          return ['admin', 'school_admin', 'super_admin'].includes(role);
+        }
+        return role === selectedRole;
+      };
+
+      if (!isRoleMatched()) {
+        setError(`This account is registered as a ${response.user?.role || 'different role'}. Please switch tabs.`);
         setIsLoading(false);
         return;
       }
@@ -69,7 +78,7 @@ export const Login = () => {
             )}
 
             <div className="flex bg-gray-100 dark:bg-gray-700 p-1 rounded-lg mb-6">
-              {['student', 'parent', 'teacher'].map((role) => (
+              {['student', 'parent', 'teacher', 'admin'].map((role) => (
                 <button
                   key={role}
                   type="button"

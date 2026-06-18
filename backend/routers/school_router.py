@@ -14,7 +14,7 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
-from auth import get_current_user
+from auth import get_current_user, get_password_hash
 from database import SessionLocal
 from models import (
     ClassroomStudent,
@@ -25,6 +25,7 @@ from models import (
     School,
     StudentFaceProfile,
     User,
+    ClassroomMessage,
 )
 from schemas import (
     AddStudentsRequest,
@@ -39,7 +40,15 @@ from schemas import (
     SchoolCreate,
     SchoolResponse,
     StudentRosterItem,
+    UserCreate,
+    UserResponse,
+    ClassroomMessageCreate,
+    ClassroomMessageResponse,
+    CounselorReportSaveRequest,
+    CounselorReportResponse,
 )
+from llm_client import get_llm_client
+
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -54,8 +63,8 @@ def get_db():
 
 
 def require_admin(current_user: User = Depends(get_current_user)) -> User:
-    """Enforce admin or super_admin role."""
-    if current_user.role not in ("admin", "super_admin"):
+    """Enforce admin, school_admin, or super_admin role."""
+    if current_user.role not in ("admin", "school_admin", "super_admin"):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Admin access required.",
@@ -64,7 +73,7 @@ def require_admin(current_user: User = Depends(get_current_user)) -> User:
 
 
 def require_teacher_or_above(current_user: User = Depends(get_current_user)) -> User:
-    if current_user.role not in ("teacher", "admin", "super_admin"):
+    if current_user.role not in ("teacher", "admin", "school_admin", "super_admin"):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Teacher access required.",
@@ -95,8 +104,83 @@ async def list_schools(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_teacher_or_above),
 ):
-    """List all schools. In single-school mode this returns one entry."""
-    return db.query(School).all()
+    """List all schools or user-restricted schools."""
+    if current_user.role == "super_admin":
+        return db.query(School).all()
+    
+    if current_user.school_id is not None:
+        return db.query(School).filter(School.id == current_user.school_id).all()
+        
+    return []
+
+
+# ============================================================
+# USER MANAGEMENT (SCOPED)
+# ============================================================
+
+@router.post("/users", response_model=UserResponse, status_code=201)
+async def create_school_user(
+    data: UserCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_admin),
+):
+    """Create a student, teacher, or school_admin within RBAC bounds."""
+    # Check email duplicate
+    existing = db.query(User).filter(User.email == data.email).first()
+    if existing:
+        raise HTTPException(status_code=400, detail="Email already registered")
+
+    # Role check
+    if data.role == "super_admin" and current_user.role != "super_admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only super_admins can create other super_admins.",
+        )
+
+    # School assignment boundaries
+    if current_user.role != "super_admin":
+        # Force the user to be created in the current user's school
+        if data.school_id is not None and data.school_id != current_user.school_id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You can only create users for your own school.",
+            )
+        data.school_id = current_user.school_id
+
+    hashed_pw = get_password_hash(data.password if data.password else "default123")
+    new_user = User(
+        name=data.name,
+        email=data.email,
+        hashed_password=hashed_pw,
+        role=data.role,
+        school_id=data.school_id,
+    )
+    db.add(new_user)
+    db.commit()
+    db.refresh(new_user)
+    return new_user
+
+
+@router.get("/users", response_model=List[UserResponse])
+async def list_school_users(
+    role: Optional[str] = None,
+    school_id: Optional[int] = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_admin),
+):
+    """List users in the school, filterable by role."""
+    query = db.query(User).filter(User.is_deleted == False)
+
+    if current_user.role != "super_admin":
+        # Enforce scoping
+        query = query.filter(User.school_id == current_user.school_id)
+    elif school_id is not None:
+        query = query.filter(User.school_id == school_id)
+
+    if role:
+        query = query.filter(User.role == role)
+
+    return query.all()
 
 
 @router.get("/{school_id}", response_model=SchoolResponse)
@@ -151,7 +235,26 @@ async def list_classrooms(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_teacher_or_above),
 ):
-    """List all classrooms in a school (across all grades)."""
+    """List all classrooms in a school (across all grades) with role scopes."""
+    # Enforce school access limits unless super_admin
+    if current_user.role != "super_admin" and current_user.school_id != school_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access to this school's classrooms is denied.",
+        )
+        
+    # If teacher, only return classrooms assigned to them in this school
+    if current_user.role == "teacher":
+        teacher_links = db.query(ClassroomTeacher).filter(
+            ClassroomTeacher.teacher_id == current_user.id
+        ).all()
+        assigned_classroom_ids = [link.classroom_id for link in teacher_links]
+        return (
+            db.query(PhysicalClassroom)
+            .filter(PhysicalClassroom.id.in_(assigned_classroom_ids))
+            .all()
+        )
+        
     grades = db.query(Grade).filter(Grade.school_id == school_id).all()
     grade_ids = [g.id for g in grades]
     return (
@@ -217,6 +320,10 @@ async def update_classroom_config(
     if "is_exam_room" in config:
         classroom.is_exam_room = bool(config.pop("is_exam_room"))
 
+    # Update camera_source if provided
+    if "camera_source" in config:
+        classroom.camera_source = str(config.pop("camera_source"))
+
     # Store the remaining thresholds in exam_config_json
     # Merge with existing config so partial updates work
     existing_config = {}
@@ -246,12 +353,35 @@ async def get_classroom(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_teacher_or_above),
 ):
-    """Get classroom detail including full student roster and teacher list."""
+    """Get classroom detail including full student roster and teacher list with role scopes."""
     classroom = db.query(PhysicalClassroom).filter(
         PhysicalClassroom.id == classroom_id
     ).first()
     if not classroom:
         raise HTTPException(404, "Classroom not found.")
+
+    # Scope checks:
+    # 1. Teachers can only view assigned classrooms
+    if current_user.role == "teacher":
+        is_assigned = db.query(ClassroomTeacher).filter(
+            ClassroomTeacher.classroom_id == classroom_id,
+            ClassroomTeacher.teacher_id == current_user.id
+        ).first()
+        if not is_assigned:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You are not assigned to this classroom.",
+            )
+            
+    # 2. School admins can only view classrooms belonging to their school
+    elif current_user.role != "super_admin":
+        # Find the school this classroom belongs to via grade
+        grade = db.query(Grade).filter(Grade.id == classroom.grade_id).first()
+        if not grade or grade.school_id != current_user.school_id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You do not have access to this classroom.",
+            )
 
     # Build student roster
     student_links = (
@@ -471,3 +601,151 @@ async def add_schedule_slot(
     db.commit()
     db.refresh(slot)
     return slot
+
+
+# User management moved up before /{school_id} to avoid FastAPI path routing collisions
+
+
+@router.post("/classrooms/{classroom_id}/messages", response_model=ClassroomMessageResponse, status_code=201)
+async def send_classroom_message(
+    classroom_id: int,
+    data: ClassroomMessageCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Send an announcement broadcast or direct message in a classroom."""
+    # Validate classroom
+    classroom = db.query(PhysicalClassroom).filter(PhysicalClassroom.id == classroom_id).first()
+    if not classroom:
+        raise HTTPException(status_code=404, detail="Classroom not found.")
+
+    # Create message
+    msg = ClassroomMessage(
+        classroom_id=classroom_id,
+        sender_id=current_user.id,
+        student_id=data.student_id,
+        message=data.message,
+    )
+    db.add(msg)
+    db.commit()
+    db.refresh(msg)
+
+    return ClassroomMessageResponse(
+        id=msg.id,
+        classroom_id=msg.classroom_id,
+        sender_id=msg.sender_id,
+        sender_name=current_user.name,
+        student_id=msg.student_id,
+        message=msg.message,
+        created_at=msg.created_at
+    )
+
+
+@router.get("/classrooms/{classroom_id}/messages", response_model=List[ClassroomMessageResponse])
+async def list_classroom_messages(
+    classroom_id: int,
+    student_id: Optional[int] = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """List classroom announcements or direct messages."""
+    classroom = db.query(PhysicalClassroom).filter(PhysicalClassroom.id == classroom_id).first()
+    if not classroom:
+        raise HTTPException(status_code=404, detail="Classroom not found.")
+
+    query = db.query(ClassroomMessage).filter(ClassroomMessage.classroom_id == classroom_id)
+
+    if current_user.role == "student":
+        # Students see announcements (null student_id) OR messages directed to/from them
+        query = query.filter(
+            (ClassroomMessage.student_id.is_(None)) | 
+            (ClassroomMessage.student_id == current_user.id)
+        )
+    else:
+        # Teachers/Admins see announcements or DMs for a specific student if requested
+        if student_id is not None:
+            query = query.filter(ClassroomMessage.student_id == student_id)
+        else:
+            query = query.filter(ClassroomMessage.student_id.is_(None))
+
+    messages = query.order_by(ClassroomMessage.created_at.asc()).all()
+
+    results = []
+    for msg in messages:
+        sender = db.query(User).filter(User.id == msg.sender_id).first()
+        results.append(
+            ClassroomMessageResponse(
+                id=msg.id,
+                classroom_id=msg.classroom_id,
+                sender_id=msg.sender_id,
+                sender_name=sender.name if sender else "Unknown",
+                student_id=msg.student_id,
+                message=msg.message,
+                created_at=msg.created_at
+            )
+        )
+    return results
+
+
+@router.get("/students/{student_id}/counselor-report", response_model=CounselorReportResponse)
+async def get_student_counselor_report(
+    student_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_teacher_or_above),
+):
+    """Retrieve a student's counselor psychologist report and AI summary."""
+    student = db.query(User).filter(User.id == student_id, User.role == "student").first()
+    if not student:
+        raise HTTPException(status_code=404, detail="Student not found.")
+
+    return CounselorReportResponse(
+        student_id=student.id,
+        counselor_report=student.counselor_report,
+        counselor_report_summary=student.counselor_report_summary
+    )
+
+
+@router.post("/students/{student_id}/counselor-report", response_model=CounselorReportResponse)
+async def save_student_counselor_report(
+    student_id: int,
+    data: CounselorReportSaveRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_teacher_or_above),
+):
+    """Save counselor report and use LLM to summarize key points."""
+    student = db.query(User).filter(User.id == student_id, User.role == "student").first()
+    if not student:
+        raise HTTPException(status_code=404, detail="Student not found.")
+
+    student.counselor_report = data.report
+
+    # Summarize via LLM client
+    if data.report.strip():
+        try:
+            llm = get_llm_client()
+            summary_prompt = f"""
+            Summarize the following school psychologist / psychiatrist report for a student.
+            Extract only the key insights relevant to their learning capacity, mental health status, and any special accommodations or tutoring adaptations required.
+            Keep the summary concise, professional, and clear (max 3-4 bullet points).
+
+            RAW COUNSELOR REPORT:
+            {data.report}
+            """
+            summary_text = await llm.generate(prompt=summary_prompt)
+            student.counselor_report_summary = summary_text.strip()
+        except Exception as e:
+            logger.error(f"Failed to generate counselor report summary: {e}")
+            student.counselor_report_summary = "Failed to generate AI summary. Please check LLM service."
+    else:
+        student.counselor_report_summary = None
+
+    db.commit()
+    db.refresh(student)
+
+    return CounselorReportResponse(
+        student_id=student.id,
+        counselor_report=student.counselor_report,
+        counselor_report_summary=student.counselor_report_summary
+    )
+
+

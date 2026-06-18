@@ -5,6 +5,12 @@ import {
   mockLessons,
   mockStudents,
   mockStudentDetail,
+  mockSchools,
+  mockGrades,
+  mockClassrooms,
+  mockUsers,
+  mockClassroomStudents,
+  mockClassroomTeachers
 } from './mockData';
 
 // ------------------------------------------------------------------
@@ -27,6 +33,87 @@ const sleep = (ms: number = 500) => new Promise((resolve) => setTimeout(resolve,
 class ApiClient {
   private client: AxiosInstance;
   private isMockMode: boolean;
+  private mockCounselorReports: Record<string, { counselor_report: string; counselor_report_summary: string }> = {
+    '1': {
+      counselor_report: "Ahmed has shown signs of mild exam anxiety. He performs exceptionally well under non-timed tasks but struggles with time pressure. He is highly visual and responsive to encouragement.",
+      counselor_report_summary: "- Mild exam anxiety: struggles with high time-pressure environments.\n- Highly visual learner: benefits from diagrams, graphs, and visual explanations.\n- Responds well to positive reinforcement and structured encouragement."
+    },
+    '4': {
+      counselor_report: "Omar is a high-achieving student but gets easily distracted during lecture-heavy segments. He benefits from hands-on tasks, short interactive quizzes, and coding examples. Counselor recommends keeping questions practical and engaging.",
+      counselor_report_summary: "- Easily distracted: struggles with long lecture-heavy segments.\n- Hands-on preference: learns best through coding exercises and practical quizzes.\n- Recommends keeping prompts and explanations action-oriented."
+    }
+  };
+  private mockClassworkStore: Record<string, any[]> = {
+    '1': [
+      {
+        id: 1,
+        course_id: 1,
+        title: "HTML Basics Homework Assignment",
+        description: "Create a personal portfolio page using basic HTML tags such as header, section, footer, and tables. Submit your HTML file below.",
+        classwork_type: "homework",
+        resource_url: "",
+        max_grade: 10,
+        due_date: "2026-06-30",
+        completed: true,
+        submission_file_url: "/uploads/sub_201_1_portfolio_draft.pdf",
+        submitted_at: new Date().toISOString()
+      },
+      {
+        id: 2,
+        course_id: 1,
+        title: "PDF Reference: HTML5 Semantic Elements Cheat Sheet",
+        description: "A useful PDF handbook summarizing standard semantic elements and their proper usage.",
+        classwork_type: "pdf",
+        resource_url: "https://www.w3.org/TR/html52/",
+        max_grade: null,
+        due_date: null,
+        completed: false,
+        submission_file_url: null,
+        submitted_at: null
+      },
+      {
+        id: 3,
+        course_id: 1,
+        title: "Video Resource: Learn Flexbox Layout in 15 Minutes",
+        description: "Watch this helper video to master CSS Flexbox container properties and alignments.",
+        classwork_type: "video",
+        resource_url: "https://www.youtube.com/embed/fYq58gdkjjA",
+        max_grade: null,
+        due_date: null,
+        completed: false,
+        submission_file_url: null,
+        submitted_at: null
+      }
+    ],
+    '5': [
+      {
+        id: 4,
+        course_id: 5,
+        title: "General Chemistry Homework 1",
+        description: "Solve questions 1 through 10 in Chapter 3 regarding molecular stoichiometry. Upload your answers in PDF format.",
+        classwork_type: "homework",
+        resource_url: "",
+        max_grade: 100,
+        due_date: "2026-06-25",
+        completed: false,
+        submission_file_url: null,
+        submitted_at: null
+      },
+      {
+        id: 5,
+        course_id: 5,
+        title: "PDF Resource: Periodic Table HD Version",
+        description: "Download and review the high-resolution Periodic Table PDF to prepare for the upcoming quiz.",
+        classwork_type: "pdf",
+        resource_url: "https://www.rsc.org/periodic-table/",
+        max_grade: null,
+        due_date: null,
+        completed: false,
+        submission_file_url: null,
+        submitted_at: null
+      }
+    ]
+  };
 
   constructor() {
     this.client = axios.create({
@@ -76,14 +163,18 @@ class ApiClient {
   async login(email: string, password: string) {
     if (this.isMockMode) {
       await sleep();
-      const mockResponse = { access_token: MOCK_TOKEN, user: { name: 'Mock User', email } };
+      const mockResponse = { access_token: MOCK_TOKEN, user: { name: 'Mock User', email, role: 'student' } };
       localStorage.setItem('auth_token', mockResponse.access_token);
+      localStorage.setItem('user', JSON.stringify(mockResponse.user));
       return mockResponse;
     }
 
     const response = await this.client.post('/auth/login', { email, password });
     if (response.data.access_token) {
       localStorage.setItem('auth_token', response.data.access_token);
+      if (response.data.user) {
+        localStorage.setItem('user', JSON.stringify(response.data.user));
+      }
     }
     return response.data;
   }
@@ -93,12 +184,16 @@ class ApiClient {
       await sleep();
       const mockResponse = { access_token: MOCK_TOKEN, user: { ...data } };
       localStorage.setItem('auth_token', mockResponse.access_token);
+      localStorage.setItem('user', JSON.stringify(mockResponse.user));
       return mockResponse;
     }
 
     const response = await this.client.post('/auth/register', data);
     if (response.data.access_token) {
       localStorage.setItem('auth_token', response.data.access_token);
+      if (response.data.user) {
+        localStorage.setItem('user', JSON.stringify(response.data.user));
+      }
     }
     return response.data;
   }
@@ -106,10 +201,12 @@ class ApiClient {
   async logout() {
     if (this.isMockMode) {
       localStorage.removeItem('auth_token');
+      localStorage.removeItem('user');
       return;
     }
     await this.client.post('/auth/logout');
     localStorage.removeItem('auth_token');
+    localStorage.removeItem('user');
   }
 
   // --- Session endpoints ---
@@ -221,33 +318,75 @@ class ApiClient {
 
   // --- Chat ---
 
-  async sendChatMessage(lessonId: string, message: string) {
+  async sendChatMessage(lessonId: string, message: string, modelBackend?: string) {
     if (this.isMockMode) {
       await sleep(1000); // Longer delay for AI simulation
       return {
         data: {
-          message: `[MOCK AI]: I received your question about "${message}". In the live app, this would be processed by an LLM based on the lesson context.`,
+          message: `[MOCK AI - ${modelBackend || 'default'}]: I received your question about "${message}". In the live app, this would be processed by an LLM based on the lesson context.`,
           timestamp: new Date().toISOString()
         },
       };
     }
-    return this.client.post('/chat', { lessonId: parseInt(lessonId), message });
+    return this.client.post('/chat', { lessonId: parseInt(lessonId), message, model_backend: modelBackend });
   }
 
-  async startActiveLearning(lessonId: string) {
+  async sendMultimodalChat(
+    lessonId: string | number,
+    message: string,
+    imageFile?: File | null,
+    audioBlob?: Blob | null,
+    respondWithVoice: boolean = false,
+    modelBackend?: string
+  ) {
+    if (this.isMockMode) {
+      await sleep(1500);
+      return {
+        data: {
+          message: `[MOCK AI MULTIMODAL]: I processed your request. Message: "${message}". Has attached image: ${!!imageFile}. Has attached audio: ${!!audioBlob}.`,
+          type: "multimodal_response",
+          detected_language: "en",
+          timestamp: new Date().toISOString()
+        }
+      };
+    }
+
+    const formData = new FormData();
+    formData.append('lesson_id', lessonId.toString());
+    formData.append('message', message);
+    formData.append('respond_with_voice', respondWithVoice ? 'true' : 'false');
+    
+    if (modelBackend) {
+      formData.append('model_backend', modelBackend);
+    }
+    if (imageFile) {
+      formData.append('image', imageFile);
+    }
+    if (audioBlob) {
+      formData.append('audio', audioBlob, 'audio.webm');
+    }
+
+    return this.client.post('/chat/multimodal', formData, {
+      headers: {
+        'Content-Type': 'multipart/form-data',
+      },
+    });
+  }
+
+  async startActiveLearning(lessonId: string, modelBackend?: string) {
     if (this.isMockMode) {
       await sleep(1000);
       return { data: { message: "[MOCK AI]: Welcome to Active Learning! Let's start with part 1." } };
     }
-    return this.client.post('/active-learning/start', { lessonId: parseInt(lessonId) });
+    return this.client.post('/active-learning/start', { lessonId: parseInt(lessonId), model_backend: modelBackend });
   }
 
-  async sendActiveLearningMessage(lessonId: string, message: string) {
+  async sendActiveLearningMessage(lessonId: string, message: string, modelBackend?: string) {
     if (this.isMockMode) {
       await sleep(1000);
       return { data: { message: "[MOCK AI]: Good job! Let's move to part 2.", is_completed: false } };
     }
-    return this.client.post('/active-learning/message', { lessonId: parseInt(lessonId), message });
+    return this.client.post('/active-learning/message', { lessonId: parseInt(lessonId), message, model_backend: modelBackend });
   }
 
   // --- Quiz ---
@@ -310,7 +449,7 @@ class ApiClient {
     }
     return this.client.post('/quiz/request', { lessonId });
   }
-  async generateQuiz(lessonId: string) {
+  async generateQuiz(lessonId: string, modelBackend?: string) {
     // If we are in Mock Mode (offline)
     if (this.isMockMode) {
       await sleep(1500);
@@ -330,7 +469,7 @@ class ApiClient {
       };
     }
 
-    return this.client.post('/quiz/generate', { lessonId: parseInt(lessonId) });
+    return this.client.post('/quiz/generate', { lessonId: parseInt(lessonId), model_backend: modelBackend });
   }
   // --- Logs and Feedback ---
 
@@ -380,6 +519,42 @@ class ApiClient {
       return { data: { success: true, comment, createdAt: new Date().toISOString() } };
     }
     return this.client.post('/insights/comment', { studentId, comment });
+  }
+
+  async getStudentCounselorReport(studentId: string | number) {
+    if (this.isMockMode) {
+      await sleep();
+      const report = this.mockCounselorReports[studentId.toString()] || { counselor_report: '', counselor_report_summary: '' };
+      return {
+        data: {
+          student_id: Number(studentId),
+          counselor_report: report.counselor_report,
+          counselor_report_summary: report.counselor_report_summary
+        }
+      };
+    }
+    return this.client.get(`/school/students/${studentId}/counselor-report`);
+  }
+
+  async saveStudentCounselorReport(studentId: string | number, report: string) {
+    if (this.isMockMode) {
+      await sleep(1500); // Simulate AI processing time
+      const summary = report.trim()
+        ? "- Responsive to interactive exercises.\n- Benefited from step-by-step guidance.\n- Needs positive reinforcement."
+        : "";
+      this.mockCounselorReports[studentId.toString()] = {
+        counselor_report: report,
+        counselor_report_summary: summary
+      };
+      return {
+        data: {
+          student_id: Number(studentId),
+          counselor_report: report,
+          counselor_report_summary: summary
+        }
+      };
+    }
+    return this.client.post(`/school/students/${studentId}/counselor-report`, { report });
   }
 
   // --- Notifications ---
@@ -494,10 +669,40 @@ class ApiClient {
 
   // --- School Management ---
 
+  async createSchool(data: { name: string; address?: string; logo_url?: string }) {
+    if (this.isMockMode) {
+      await sleep();
+      const newSchool = { id: mockSchools.length + 1, ...data };
+      mockSchools.push(newSchool);
+      return { data: newSchool };
+    }
+    return this.client.post('/school/', data);
+  }
+
+  async createGrade(schoolId: string | number, data: { name: string; academic_year: string }) {
+    if (this.isMockMode) {
+      await sleep();
+      const newGrade = { id: mockGrades.length + 1, school_id: Number(schoolId), ...data };
+      mockGrades.push(newGrade);
+      return { data: newGrade };
+    }
+    return this.client.post(`/school/${schoolId}/grades`, data);
+  }
+
+  async createClassroom(gradeId: string | number, data: { name: string; room_number?: string; capacity?: number; camera_source?: string; is_exam_room?: boolean }) {
+    if (this.isMockMode) {
+      await sleep();
+      const newClassroom = { id: mockClassrooms.length + 1, grade_id: Number(gradeId), name: data.name, room_number: data.room_number, capacity: data.capacity, camera_source: '0', is_exam_room: !!data.is_exam_room };
+      mockClassrooms.push(newClassroom);
+      return { data: newClassroom };
+    }
+    return this.client.post(`/school/grades/${gradeId}/classrooms`, data);
+  }
+
   async getSchools() {
     if (this.isMockMode) {
       await sleep();
-      return { data: [{ id: 1, name: 'Seba High School' }] };
+      return { data: mockSchools };
     }
     return this.client.get('/school/');
   }
@@ -505,7 +710,7 @@ class ApiClient {
   async getGrades(schoolId: string | number) {
     if (this.isMockMode) {
       await sleep();
-      return { data: [{ id: 1, school_id: schoolId, name: 'Grade 10', academic_year: '2025-2026' }] };
+      return { data: mockGrades.filter(g => g.school_id === Number(schoolId)) };
     }
     return this.client.get(`/school/${schoolId}/grades`);
   }
@@ -513,7 +718,8 @@ class ApiClient {
   async getClassrooms(schoolId: string | number) {
     if (this.isMockMode) {
       await sleep();
-      return { data: [{ id: 1, grade_id: 1, name: '10-A Science Lab', camera_source: '0', is_exam_room: false }] };
+      const gradeIds = mockGrades.filter(g => g.school_id === Number(schoolId)).map(g => g.id);
+      return { data: mockClassrooms.filter(c => gradeIds.includes(c.grade_id)) };
     }
     return this.client.get(`/school/${schoolId}/classrooms`);
   }
@@ -526,9 +732,200 @@ class ApiClient {
     return this.client.patch(`/school/classrooms/${classroomId}/config`, config);
   }
 
+  async getSchoolUsers(role?: string, schoolId?: string | number) {
+    if (this.isMockMode) {
+      await sleep();
+      let users = mockUsers;
+      if (schoolId) {
+        users = users.filter(u => u.school_id === Number(schoolId));
+      }
+      if (role) {
+        users = users.filter(u => u.role === role);
+      }
+      return { data: users };
+    }
+    return this.client.get('/school/users', { params: { role, school_id: schoolId } });
+  }
+
+  async createSchoolUser(data: { name: string; email: string; password?: string; role: string; school_id?: number | null }) {
+    if (this.isMockMode) {
+      await sleep();
+      const newUser = { id: mockUsers.length + 1000, school_id: data.school_id ? Number(data.school_id) : null, ...data };
+      mockUsers.push(newUser);
+      return { data: newUser };
+    }
+    return this.client.post('/school/users', data);
+  }
+
+  async getClassroomDetail(classroomId: string | number) {
+    if (this.isMockMode) {
+      await sleep();
+      const c = mockClassrooms.find(room => room.id === Number(classroomId));
+      if (!c) return { data: { id: classroomId, name: 'Classroom not found', students: [], teachers: [] } };
+      
+      const studentsInClass = mockClassroomStudents
+        .filter(cs => cs.classroom_id === Number(classroomId) && cs.is_active)
+        .map(cs => {
+          const u = mockUsers.find(user => user.id === cs.student_id);
+          return {
+            student_id: cs.student_id,
+            name: u ? u.name : 'Unknown Student',
+            email: u ? u.email : '',
+            is_active: cs.is_active
+          };
+        });
+
+      const teachersInClass = mockClassroomTeachers
+        .filter(ct => ct.classroom_id === Number(classroomId))
+        .map(ct => {
+          const u = mockUsers.find(user => user.id === ct.teacher_id);
+          return {
+            teacher_id: ct.teacher_id,
+            name: u ? u.name : 'Unknown Teacher',
+            role: ct.role,
+            subject: ct.subject
+          };
+        });
+
+      return {
+        data: {
+          id: c.id,
+          name: c.name,
+          room_number: c.room_number,
+          students: studentsInClass,
+          teachers: teachersInClass
+        }
+      };
+    }
+    return this.client.get(`/school/classrooms/${classroomId}`);
+  }
+
+  async getClassroomCourseAnalytics(classroomId: string | number, courseId: string | number) {
+    if (this.isMockMode) {
+      await sleep();
+      const c = mockClassrooms.find(room => room.id === Number(classroomId));
+      const course = mockCourses.find(item => item.id === courseId.toString());
+      if (!c || !course) return { data: { classroom_id: classroomId, course_id: courseId, students: [], grade_distribution: { A:0, B:0, C:0, D:0 } } };
+      
+      const studentsInClass = mockClassroomStudents
+        .filter(cs => cs.classroom_id === Number(classroomId) && cs.is_active)
+        .map(cs => {
+          const u = mockUsers.find(user => user.id === cs.student_id);
+          
+          // Seed grade & progress deterministically
+          const seed = Number(cs.student_id) + Number(courseId);
+          const baseScore = (Number(cs.student_id) % 2 === 0) ? 85 : 65;
+          const variation = ((seed * 9301 + 49297) % 233280) % 21 - 10;
+          const grade = Math.max(0, Math.min(100, baseScore + variation));
+          
+          const progress = Math.max(10, (seed * 17) % 91); // deterministic progress 10-100
+          
+          // Deterministic focus rate (65-98%)
+          const focusSeed = Number(cs.student_id) * 3 + Number(courseId) * 7;
+          const baseFocus = (Number(cs.student_id) % 2 === 0) ? 88 : 78;
+          const focusVar = ((focusSeed * 9301 + 49297) % 233280) % 15 - 7;
+          const focusRate = Math.max(50, Math.min(100, baseFocus + focusVar));
+          
+          return {
+            student_id: cs.student_id,
+            name: u ? u.name : 'Unknown Student',
+            email: u ? u.email : '',
+            grade: grade,
+            progress: progress,
+            attendance: Math.floor(Math.random() * 15) + 85,
+            focus_rate: focusRate
+          };
+        });
+        
+      const grades = studentsInClass.map(s => s.grade);
+      const progresses = studentsInClass.map(s => s.progress);
+      const avgGrade = grades.length > 0 ? (grades.reduce((a, b) => a + b, 0) / grades.length) : 0;
+      const avgProgress = progresses.length > 0 ? (progresses.reduce((a, b) => a + b, 0) / progresses.length) : 0;
+      const avgFocus = studentsInClass.length > 0 ? (studentsInClass.reduce((acc, s) => acc + s.focus_rate, 0) / studentsInClass.length) : 0;
+      
+      return {
+        data: {
+          classroom_id: classroomId,
+          classroom_name: c.name,
+          course_id: courseId,
+          course_title: course.title,
+          instructor: course.instructor,
+          avg_grade: Number(avgGrade.toFixed(1)),
+          avg_progress: Number(avgProgress.toFixed(1)),
+          avg_focus_rate: Number(avgFocus.toFixed(1)),
+          student_count: studentsInClass.length,
+          students: studentsInClass,
+          grade_distribution: {
+            A: studentsInClass.filter(s => s.grade >= 90).length,
+            B: studentsInClass.filter(s => s.grade >= 80 && s.grade < 90).length,
+            C: studentsInClass.filter(s => s.grade >= 70 && s.grade < 80).length,
+            D: studentsInClass.filter(s => s.grade < 70).length
+          }
+        }
+      };
+    }
+    return this.client.get(`/analytics/classroom/${classroomId}/course/${courseId}`);
+  }
+
+  async addClassroomStudents(classroomId: string | number, studentIds: number[]) {
+    if (this.isMockMode) {
+      await sleep();
+      studentIds.forEach(sid => {
+        const existingIdx = mockClassroomStudents.findIndex(cs => cs.classroom_id === Number(classroomId) && cs.student_id === sid);
+        if (existingIdx !== -1) {
+          mockClassroomStudents[existingIdx].is_active = true;
+        } else {
+          mockClassroomStudents.push({ id: mockClassroomStudents.length + 1, classroom_id: Number(classroomId), student_id: sid, is_active: true });
+        }
+      });
+      return { data: { status: 'success', added: studentIds.length } };
+    }
+    return this.client.post(`/school/classrooms/${classroomId}/students`, { student_ids: studentIds });
+  }
+
+  async assignClassroomTeacher(classroomId: string | number, teacherData: { teacher_id: number; role: string; subject?: string }) {
+    if (this.isMockMode) {
+      await sleep();
+      const existingIdx = mockClassroomTeachers.findIndex(ct => ct.classroom_id === Number(classroomId) && ct.teacher_id === teacherData.teacher_id);
+      if (existingIdx !== -1) {
+        mockClassroomTeachers[existingIdx].role = teacherData.role;
+        mockClassroomTeachers[existingIdx].subject = teacherData.subject || '';
+      } else {
+        mockClassroomTeachers.push({
+          id: mockClassroomTeachers.length + 1,
+          classroom_id: Number(classroomId),
+          teacher_id: teacherData.teacher_id,
+          role: teacherData.role,
+          subject: teacherData.subject || ''
+        });
+      }
+      return { data: { status: 'success' } };
+    }
+    return this.client.post(`/school/classrooms/${classroomId}/teachers`, teacherData);
+  }
+
+  async removeClassroomStudent(classroomId: string | number, studentId: string | number) {
+    if (this.isMockMode) {
+      await sleep();
+      const existingIdx = mockClassroomStudents.findIndex(cs => cs.classroom_id === Number(classroomId) && cs.student_id === Number(studentId));
+      if (existingIdx !== -1) {
+        mockClassroomStudents[existingIdx].is_active = false;
+      }
+      return { data: { success: true } };
+    }
+    return this.client.delete(`/school/classrooms/${classroomId}/students/${studentId}`);
+  }
+
   // --- CV Analytics ---
 
-  async startCvSession(classroomId: string | number, type: 'class' | 'exam' = 'class', cameraSource: string = '0') {
+  async startCvSession(
+    classroomId: string | number,
+    type: 'class' | 'exam' = 'class',
+    cameraSource: string = '0',
+    teacherId?: number,
+    courseId?: number,
+    lessonId?: number
+  ) {
     if (this.isMockMode) {
       await sleep();
       return { data: { success: true, session_id: 1, classroom_id: classroomId, status: 'started' } };
@@ -536,7 +933,10 @@ class ApiClient {
     return this.client.post('/cv/session/start', {
       classroom_id: parseInt(classroomId.toString()),
       session_type: type,
-      camera_source: cameraSource
+      camera_source: cameraSource,
+      teacher_id: teacherId,
+      course_id: courseId,
+      lesson_id: lessonId
     });
   }
 
@@ -554,13 +954,248 @@ class ApiClient {
       return { data: { success: true, student_id: studentId } };
     }
     const formData = new FormData();
-    formData.append('file', file);
+    formData.append('photo', file);
     formData.append('student_id', studentId.toString());
     return this.client.post('/cv/faces/enroll', formData, {
       headers: {
         'Content-Type': 'multipart/form-data',
       },
     });
+  }
+
+  async uploadClassworkFile(file: File) {
+    if (this.isMockMode) {
+      await sleep();
+      return { data: { url: '/uploads/mock_material.pdf', filename: file.name } };
+    }
+    const formData = new FormData();
+    formData.append('file', file);
+    return this.client.post('/classwork/upload', formData, {
+      headers: {
+        'Content-Type': 'multipart/form-data',
+      },
+    });
+  }
+
+  // --- Classwork endpoints ---
+
+  async getClasswork(courseId: string | number) {
+    if (this.isMockMode) {
+      await sleep();
+      return { data: this.mockClassworkStore[courseId.toString()] || [] };
+    }
+    return this.client.get(`/classwork/course/${courseId}`);
+  }
+
+  async createClasswork(courseId: string | number, data: { title: string; description?: string; classwork_type: string; resource_url?: string; max_grade?: number; due_date?: string }) {
+    if (this.isMockMode) {
+      await sleep();
+      if (!this.mockClassworkStore[courseId.toString()]) {
+        this.mockClassworkStore[courseId.toString()] = [];
+      }
+      const newItem = {
+        id: Date.now(),
+        course_id: Number(courseId),
+        ...data,
+        created_at: new Date().toISOString(),
+        completed: false,
+        submission_file_url: null,
+        submitted_at: null,
+        grade: null
+      };
+      this.mockClassworkStore[courseId.toString()].unshift(newItem);
+      return { data: newItem };
+    }
+    return this.client.post(`/classwork/course/${courseId}`, data);
+  }
+
+  async submitClasswork(classworkId: string | number, formData: FormData) {
+    if (this.isMockMode) {
+      await sleep();
+      let found = false;
+      const file = formData.get('file') as File | null;
+      const completed = formData.get('completed') === 'true';
+      
+      for (const courseId of Object.keys(this.mockClassworkStore)) {
+        const idx = this.mockClassworkStore[courseId].findIndex(item => item.id === Number(classworkId));
+        if (idx !== -1) {
+          const item = this.mockClassworkStore[courseId][idx];
+          item.completed = completed;
+          if (file) {
+            item.submission_file_url = `/uploads/mock_${Date.now()}_${file.name}`;
+          }
+          item.submitted_at = new Date().toISOString();
+          found = true;
+          break;
+        }
+      }
+      return { data: { status: 'success', completed } };
+    }
+    return this.client.post(`/classwork/${classworkId}/submit`, formData, {
+      headers: {
+        'Content-Type': 'multipart/form-data',
+      },
+    });
+  }
+
+  async unsubmitClasswork(classworkId: string | number) {
+    if (this.isMockMode) {
+      await sleep();
+      for (const courseId of Object.keys(this.mockClassworkStore)) {
+        const idx = this.mockClassworkStore[courseId].findIndex(item => item.id === Number(classworkId));
+        if (idx !== -1) {
+          const item = this.mockClassworkStore[courseId][idx];
+          item.completed = false;
+          item.submission_file_url = null;
+          item.submitted_at = null;
+          break;
+        }
+      }
+      return { data: { status: 'success' } };
+    }
+    return this.client.post(`/classwork/${classworkId}/unsubmit`);
+  }
+
+  async getCurriculumPdfs() {
+    if (this.isMockMode) {
+      await sleep();
+      return { data: [{ filename: "math_term_1.pdf", filepath: "/curriculum_pdfs/math_term_1.pdf" }] };
+    }
+    return this.client.get('/classwork/curriculum-pdfs');
+  }
+
+  async getClassworkSubmissions(classworkId: string | number) {
+    if (this.isMockMode) {
+      await sleep();
+      return { data: [
+        {
+          id: 1,
+          classwork_id: Number(classworkId),
+          student_id: 4,
+          student: { id: 4, name: "عمر الفاروق", email: "student@seba.com" },
+          submitted_at: new Date().toISOString(),
+          grade: null,
+          answers_json: "{}",
+          completed: true,
+          submission_file_url: "/uploads/mock_homework.pdf"
+        }
+      ]};
+    }
+    return this.client.get(`/classwork/${classworkId}/submissions`);
+  }
+
+  async gradeClassworkSubmission(classworkId: string | number, studentId: string | number, grade: number) {
+    if (this.isMockMode) {
+      await sleep();
+      return { data: { status: 'success', grade } };
+    }
+    return this.client.post(`/classwork/${classworkId}/grade`, { student_id: Number(studentId), grade });
+  }
+
+  async getClassroomMessages(classroomId: string | number, studentId?: string | number) {
+    if (this.isMockMode) {
+      await sleep();
+      return { data: [
+        {
+          id: 1,
+          classroom_id: Number(classroomId),
+          sender_id: 2,
+          sender: { name: "أ/ احمد صبحي", role: "teacher" },
+          student_id: studentId ? Number(studentId) : null,
+          message: "أهلاً بكم في الفصل! سنبدأ درس الجبر غداً.",
+          created_at: new Date(Date.now() - 3600000).toISOString()
+        }
+      ]};
+    }
+    return this.client.get(`/school/classrooms/${classroomId}/messages`, { params: { student_id: studentId } });
+  }
+
+  async sendClassroomMessage(classroomId: string | number, data: { message: string; student_id?: number | null }) {
+    if (this.isMockMode) {
+      await sleep();
+      const newMsg = {
+        id: Date.now(),
+        classroom_id: Number(classroomId),
+        sender_id: 2,
+        sender: { name: "أ/ احمد صبحي", role: "teacher" },
+        student_id: data.student_id || null,
+        message: data.message,
+        created_at: new Date().toISOString()
+      };
+      return { data: newMsg };
+    }
+    return this.client.post(`/school/classrooms/${classroomId}/messages`, data);
+  }
+
+  async getStudentFocusHistory(studentId: string | number) {
+    if (this.isMockMode) {
+      await sleep();
+      return { data: [
+        {
+          session_id: 1,
+          started_at: new Date(Date.now() - 86400000).toISOString(),
+          focus_rate: 85.5,
+          teacher_name: "أ/ احمد صبحي",
+          course_title: "Math Grade 8 1st term",
+          lesson_title: "Introduction to Algebra"
+        },
+        {
+          session_id: 2,
+          started_at: new Date().toISOString(),
+          focus_rate: 78.2,
+          teacher_name: "أ/ احمد صبحي",
+          course_title: "Math Grade 8 1st term",
+          lesson_title: "Linear Equations"
+        }
+      ]};
+    }
+    return this.client.get(`/analytics/student/${studentId}/focus-history`);
+  }
+
+  async getTeacherFocusHistory(teacherId: string | number) {
+    if (this.isMockMode) {
+      await sleep();
+      return { data: [
+        {
+          session_id: 1,
+          started_at: new Date(Date.now() - 86400000).toISOString(),
+          avg_focus_rate: 82.3,
+          course_title: "Math Grade 8 1st term",
+          lesson_title: "Introduction to Algebra"
+        },
+        {
+          session_id: 2,
+          started_at: new Date().toISOString(),
+          avg_focus_rate: 84.1,
+          course_title: "Math Grade 8 1st term",
+          lesson_title: "Linear Equations"
+        }
+      ]};
+    }
+    return this.client.get(`/analytics/teacher/${teacherId}/focus-history`);
+  }
+
+  async getCourseFocusHistory(courseId: string | number) {
+    if (this.isMockMode) {
+      await sleep();
+      return { data: [
+        {
+          session_id: 1,
+          started_at: new Date(Date.now() - 86400000).toISOString(),
+          avg_focus_rate: 82.3,
+          teacher_name: "أ/ احمد صبحي",
+          lesson_title: "Introduction to Algebra"
+        },
+        {
+          session_id: 2,
+          started_at: new Date().toISOString(),
+          avg_focus_rate: 84.1,
+          teacher_name: "أ/ احمد صبحي",
+          lesson_title: "Linear Equations"
+        }
+      ]};
+    }
+    return this.client.get(`/analytics/course/${courseId}/focus-history`);
   }
 }
 

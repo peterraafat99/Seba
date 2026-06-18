@@ -9,6 +9,7 @@ class UserCreate(BaseModel):
     email: EmailStr
     password: str = "default123"  # Default password for now
     role: str = "student"
+    school_id: Optional[int] = None
 
 
 class UserResponse(BaseModel):
@@ -16,6 +17,7 @@ class UserResponse(BaseModel):
     name: str
     email: str
     role: str
+    school_id: Optional[int] = None
     
     class Config:
         from_attributes = True
@@ -143,6 +145,7 @@ class QuizResponse(BaseModel):
 class ChatMessage(BaseModel):
     lessonId: int
     message: str
+    model_backend: Optional[str] = None
 
 
 class ChatResponse(BaseModel):
@@ -151,10 +154,12 @@ class ChatResponse(BaseModel):
 
 class ActiveLearningStartRequest(BaseModel):
     lessonId: int
+    model_backend: Optional[str] = None
 
 class ActiveLearningMessageRequest(BaseModel):
     lessonId: int
     message: str
+    model_backend: Optional[str] = None
 
 
 # Student/Insights schemas
@@ -303,7 +308,9 @@ class CVSessionStartRequest(BaseModel):
     classroom_id: int
     session_type: str = "class"  # 'class' | 'exam'
     teacher_id: Optional[int] = None
-    subject_name: Optional[str] = None
+    course_id: Optional[int] = None
+    lesson_id: Optional[int] = None
+
 
 class CVSessionResponse(BaseModel):
     session_id: int
@@ -361,3 +368,39 @@ class ClassroomAnalyticsResponse(BaseModel):
     avg_focus_rate: float
     total_students: int
     sessions: List[Dict] = []
+
+
+# =============================================================================
+# MESSAGING SCHEMAS
+# =============================================================================
+
+class ClassroomMessageCreate(BaseModel):
+    message: str
+    student_id: Optional[int] = None
+
+class ClassroomMessageResponse(BaseModel):
+    id: int
+    classroom_id: int
+    sender_id: int
+    sender_name: str
+    student_id: Optional[int] = None
+    message: str
+    created_at: datetime
+    class Config:
+        from_attributes = True
+
+
+# =============================================================================
+# COUNSELOR REPORT SCHEMAS
+# =============================================================================
+
+class CounselorReportSaveRequest(BaseModel):
+    report: str
+
+class CounselorReportResponse(BaseModel):
+    student_id: int
+    counselor_report: Optional[str] = None
+    counselor_report_summary: Optional[str] = None
+    class Config:
+        from_attributes = True
+

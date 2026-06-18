@@ -11,7 +11,7 @@ import shutil
 from typing import Dict, List, Optional, Any
 from pydantic import BaseModel, Field
 from database import SessionLocal, engine, Base
-from models import User, Course, Lesson, Enrollment, Quiz, QuizQuestion, QuizAnswer, Activity, TeacherNote, StudentSentiment, LessonProgress
+from models import User, Course, Lesson, Enrollment, Quiz, QuizQuestion, QuizAnswer, Activity, TeacherNote, StudentSentiment, LessonProgress, Classwork, ClassworkSubmission
 from schemas import (
     UserCreate, UserResponse, Token, CourseCreate, CourseResponse,
     LessonCreate, LessonResponse, DashboardResponse, QuizResponse,
@@ -20,12 +20,14 @@ from schemas import (
 )
 from auth import get_current_user, create_access_token, verify_password, get_password_hash
 from admin import admin_router
-from chatbot import get_ai_response, start_active_learning, process_active_learning
+from chatbot import get_ai_response, start_active_learning, process_active_learning 
 from quiz_engine import generate_personalized_quiz
 # ---- New School Platform Routers ----
 from routers.school_router import router as school_router
 from routers.cv_router import router as cv_router
 from routers.analytics_router import router as analytics_router
+from routers.attendance import router as attendance_router
+from routers.classwork_router import router as classwork_router
 from cv_analytics.session_manager import session_manager
 
 # Create database tables
@@ -36,7 +38,10 @@ app = FastAPI(title="School Analytics Platform API", version="2.0.0")
 # CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://localhost:3000", "http://127.0.0.1:5173", "http://127.0.0.1:3000"],
+    allow_origins=[
+        "http://localhost:5173", "http://localhost:3000", "http://localhost:8000",
+        "http://127.0.0.1:5173", "http://127.0.0.1:3000", "http://127.0.0.1:8000"
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -54,6 +59,7 @@ os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 # Mount static files for serving uploaded images
 app.mount("/uploads", StaticFiles(directory=UPLOAD_DIR), name="uploads")
+app.mount("/curriculum_pdfs", StaticFiles(directory="curriculum_pdfs"), name="curriculum_pdfs")
 
 # Include admin router (legacy)
 app.include_router(admin_router, prefix="/api/admin", tags=["admin"])
@@ -62,6 +68,8 @@ app.include_router(admin_router, prefix="/api/admin", tags=["admin"])
 app.include_router(school_router, prefix="/api/school", tags=["school"])
 app.include_router(cv_router, prefix="/api/cv", tags=["cv-analytics"])
 app.include_router(analytics_router, prefix="/api/analytics", tags=["analytics"])
+app.include_router(attendance_router, prefix="/api", tags=["Attendance (NFC)"])
+app.include_router(classwork_router, prefix="/api/classwork", tags=["classwork"])
 
 # WebSocket endpoint for CV streaming is registered directly on the cv_router
 # Connect via: ws://localhost:8000/api/cv/ws/{classroom_id}
@@ -75,6 +83,43 @@ def get_db():
         yield db
     finally:
         db.close()
+
+# ==========================================
+# DIAGNOSTIC: Test Gemini API Key
+# ==========================================
+
+@app.get("/api/test-gemini")
+async def test_gemini_api():
+    """
+    Quick diagnostic endpoint — tests the Gemini API key and model ID.
+    Visit: http://localhost:8000/api/test-gemini
+    """
+    import os
+    api_key = os.getenv("GEMINI_API_KEY", "")
+    model_name = os.getenv("CLOUD_MODEL", "gemma-4-31b-it")
+
+    if not api_key:
+        return {"status": "error", "message": "GEMINI_API_KEY is not set in .env"}
+
+    try:
+        import google.generativeai as genai
+        genai.configure(api_key=api_key)
+        model = genai.GenerativeModel(model_name)
+        response = await model.generate_content_async("Say 'API OK' and nothing else.")
+        return {
+            "status": "success",
+            "model": model_name,
+            "key_prefix": api_key[:8] + "...",
+            "response": response.text.strip()
+        }
+    except Exception as e:
+        return {
+            "status": "error",
+            "model": model_name,
+            "key_prefix": api_key[:8] + "...",
+            "error": str(e)
+        }
+
 
 # ==========================================
 # 1. PYDANTIC MODELS
@@ -102,6 +147,7 @@ class QuizRequest(BaseModel):
 # [FIX 1] Added this model for the Generate Quiz Button
 class GenerateQuizRequest(BaseModel):
     lessonId: int
+    model_backend: Optional[str] = None
 
 class LessonLogRequest(BaseModel):
     lessonId: int
@@ -145,7 +191,8 @@ async def register(user_data: UserCreate, db: Session = Depends(get_db)):
         name=user_data.name,
         email=user_data.email,
         hashed_password=hashed_password,
-        role=user_data.role
+        role=user_data.role,
+        school_id=user_data.school_id
     )
     db.add(db_user)
     db.commit()
@@ -204,7 +251,8 @@ async def register(user: UserCreate, db: Session = Depends(get_db)):
         name=user.name,
         email=user.email,
         hashed_password=hashed_password,
-        role=user.role 
+        role=user.role,
+        school_id=user.school_id
     )
     db.add(new_user)
     db.commit()
@@ -271,8 +319,13 @@ async def end_session(request: SessionEndRequest, current_user: User = Depends(g
 @app.get("/api/dashboard", response_model=DashboardResponse)
 async def get_dashboard(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     # 1. Parent/Teacher View
-    if current_user.role in ["parent", "teacher"]:
-        students_list = current_user.children if current_user.role == "parent" else current_user.students_taught
+    if current_user.role in ["parent", "teacher", "admin"]:
+        if current_user.role == "parent":
+            students_list = current_user.children
+        elif current_user.role == "teacher":
+            students_list = current_user.students_taught
+        else:
+            students_list = db.query(User).filter(User.role == "student").all()
         # Filter out soft-deleted students
         students_list = [s for s in students_list if not s.is_deleted]
         
@@ -323,11 +376,16 @@ async def get_dashboard(current_user: User = Depends(get_current_user), db: Sess
     total_progress = 0
     if courses:
         for course in courses:
-            completed_lessons = db.query(Lesson).filter(Lesson.course_id == course.id, Lesson.completed == True).count()
+            completed_lessons = db.query(Activity).filter(
+                Activity.user_id == current_user.id,
+                Activity.activity_type == "lesson_completed",
+                Activity.entity_type == "lesson"
+            ).join(Lesson, Lesson.id == Activity.entity_id).filter(Lesson.course_id == course.id).count()
             total_lessons = db.query(Lesson).filter(Lesson.course_id == course.id).count()
             if total_lessons > 0:
                 total_progress += (completed_lessons / total_lessons) * 100
         total_progress = total_progress / len(courses)
+
     
     upcoming_lessons = []
     for course in courses:
@@ -359,7 +417,11 @@ async def get_dashboard(current_user: User = Depends(get_current_user), db: Sess
     course_responses = []
     for course in courses:
         enrollments_count = db.query(Enrollment).filter(Enrollment.course_id == course.id).count()
-        completed_lessons = db.query(Lesson).filter(Lesson.course_id == course.id, Lesson.completed == True).count()
+        completed_lessons = db.query(Activity).filter(
+            Activity.user_id == current_user.id,
+            Activity.activity_type == "lesson_completed",
+            Activity.entity_type == "lesson"
+        ).join(Lesson, Lesson.id == Activity.entity_id).filter(Lesson.course_id == course.id).count()
         total_lessons = db.query(Lesson).filter(Lesson.course_id == course.id).count()
         progress = (completed_lessons / total_lessons * 100) if total_lessons > 0 else 0
         course_responses.append({
@@ -384,7 +446,11 @@ async def get_all_courses(current_user: User = Depends(get_current_user), db: Se
     for course in courses:
         enrollments = db.query(Enrollment).filter(Enrollment.course_id == course.id).all()
         lessons = db.query(Lesson).filter(Lesson.course_id == course.id).order_by(Lesson.order).all()
-        completed_lessons = db.query(Lesson).filter(Lesson.course_id == course.id, Lesson.completed == True).count()
+        completed_lessons = db.query(Activity).filter(
+            Activity.user_id == current_user.id,
+            Activity.activity_type == "lesson_completed",
+            Activity.entity_type == "lesson"
+        ).join(Lesson, Lesson.id == Activity.entity_id).filter(Lesson.course_id == course.id).count()
         progress = int((completed_lessons / len(lessons) * 100)) if lessons else 0
         result.append({
             "id": course.id,
@@ -398,6 +464,7 @@ async def get_all_courses(current_user: User = Depends(get_current_user), db: Se
         })
     return result
 
+
 @app.get("/api/courses/{course_id}", response_model=CourseResponse)
 async def get_course(course_id: int, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     course = db.query(Course).filter(Course.id == course_id).first()
@@ -406,11 +473,20 @@ async def get_course(course_id: int, current_user: User = Depends(get_current_us
     
     enrollments = db.query(Enrollment).filter(Enrollment.course_id == course_id).all()
     lessons = db.query(Lesson).filter(Lesson.course_id == course_id).order_by(Lesson.order).all()
-    user_enrollment = db.query(Enrollment).filter(Enrollment.course_id == course_id, Enrollment.student_id == current_user.id).first()
-    
+    completed_lesson_ids = {
+        act.entity_id for act in db.query(Activity).filter(
+            Activity.user_id == current_user.id,
+            Activity.activity_type == "lesson_completed",
+            Activity.entity_type == "lesson"
+        ).all()
+    }
+    user_enrollment = db.query(Enrollment).filter(
+        Enrollment.student_id == current_user.id,
+        Enrollment.course_id == course_id
+    ).first()
     progress = user_enrollment.progress if user_enrollment else 0.0
     if user_enrollment and lessons:
-        completed_count = sum(1 for lesson in lessons if lesson.completed)
+        completed_count = sum(1 for lesson in lessons if lesson.id in completed_lesson_ids)
         progress = (completed_count / len(lessons)) * 100
 
     return {
@@ -424,10 +500,11 @@ async def get_course(course_id: int, current_user: User = Depends(get_current_us
         "isEnrolled": user_enrollment is not None,
         "progress": round(progress, 1),
         "lessons": [
-            {"id": l.id, "title": l.title, "duration": l.duration, "completed": l.completed if user_enrollment else False, "order": l.order}
+            {"id": l.id, "title": l.title, "duration": l.duration, "completed": l.id in completed_lesson_ids if user_enrollment else False, "order": l.order}
             for l in lessons
         ]
     }
+
 
 @app.post("/api/courses/{course_id}/enroll")
 async def enroll_in_course(course_id: int, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
@@ -534,36 +611,48 @@ async def track_lesson_time(
 @app.post("/api/chat")
 async def chat(message: ChatMessage, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     try:
+        # DEBUG: Print exactly what the frontend sent
+        print(f"\n{'='*50}")
+        print(f"[CHAT] Received model_backend = '{message.model_backend}'")
+        print(f"[CHAT] Message = '{message.message[:60]}'")
+        print(f"{'='*50}\n")
+
         trigger_keywords = ["quiz me", "generate quiz", "make a quiz", "test me"]
         if any(kw in message.message.lower() for kw in trigger_keywords):
-            
-            # [FIX 2] Pass message.lessonId!
-            quiz_data = await generate_personalized_quiz(current_user.id, db, message.lessonId)
-            
+            quiz_data = await generate_personalized_quiz(
+                current_user.id, db, message.lessonId,
+                model_backend=message.model_backend  # FIX: pass backend
+            )
             if quiz_data.get("error"):
                 return {"message": quiz_data["message"], "type": "text"}
-            
             return {
                 "type": "quiz_widget", 
                 "data": quiz_data, 
                 "message": "I've generated a personalized quiz for you based on your recent progress."
             }
         
-        ai_message = await get_ai_response(message.message, message.lessonId, current_user.id, db)
+        ai_message = await get_ai_response(
+            user_message=message.message,
+            lesson_id=message.lessonId,
+            user_id=current_user.id,
+            db=db,
+            model_backend=message.model_backend
+        )
         
-        # Handle dict return from chatbot.py if it decides to return a widget
         if isinstance(ai_message, dict):
              return ai_message
-             
+              
         return ChatResponse(message=ai_message)
     except Exception as e:
         print(f"Chat Error: {e}")
         raise HTTPException(status_code=503, detail="AI Service unavailable")
 
+
+
 @app.post("/api/active-learning/start")
 async def api_start_active_learning(req: ActiveLearningStartRequest, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     try:
-        response = await start_active_learning(req.lessonId, current_user.id, db)
+        response = await start_active_learning(req.lessonId, current_user.id, db, model_backend=req.model_backend)
         if "error" in response:
             raise HTTPException(status_code=404, detail=response["error"])
         return response
@@ -574,11 +663,12 @@ async def api_start_active_learning(req: ActiveLearningStartRequest, current_use
 @app.post("/api/active-learning/message")
 async def api_process_active_learning(req: ActiveLearningMessageRequest, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     try:
-        response = await process_active_learning(req.message, req.lessonId, current_user.id, db)
+        response = await process_active_learning(req.message, req.lessonId, current_user.id, db, model_backend=req.model_backend)
         return response
     except Exception as e:
         print(f"Active Learning Message Error: {e}")
         raise HTTPException(status_code=500, detail="Failed to process active learning message")
+
 
 # ==========================================
 # MULTIMODAL CHAT ENDPOINTS
@@ -589,6 +679,7 @@ async def chat_with_image(
     message: str = Form(default="What is this?"),
     lesson_id: int = Form(...),
     image: UploadFile = File(...),
+    model_backend: Optional[str] = Form(None),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
@@ -617,7 +708,8 @@ async def chat_with_image(
             lesson_id=lesson_id,
             user_id=current_user.id,
             db=db,
-            image_b64=image_b64
+            image_b64=image_b64,
+            model_backend=model_backend
         )
 
         if isinstance(ai_message, dict):
@@ -635,6 +727,7 @@ async def chat_with_voice(
     lesson_id: int = Form(...),
     audio: UploadFile = File(...),
     respond_with_voice: bool = Form(default=False),
+    model_backend: Optional[str] = Form(None),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
@@ -674,7 +767,8 @@ async def chat_with_voice(
             user_message=text,
             lesson_id=lesson_id,
             user_id=current_user.id,
-            db=db
+            db=db,
+            model_backend=model_backend
         )
 
         if isinstance(ai_message, dict):
@@ -712,6 +806,7 @@ async def chat_multimodal(
     image: UploadFile = File(default=None),
     audio: UploadFile = File(default=None),
     respond_with_voice: bool = Form(default=False),
+    model_backend: Optional[str] = Form(None),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
@@ -754,7 +849,8 @@ async def chat_multimodal(
         lesson_id=lesson_id,
         user_id=current_user.id,
         db=db,
-        image_b64=image_b64
+        image_b64=image_b64,
+        model_backend=model_backend
     )
 
     if isinstance(ai_message, dict):
@@ -853,7 +949,7 @@ async def generate_ai_quiz(
     Triggers the AI to create a personalized quiz for a SPECIFIC lesson.
     """
     # [FIX 4] Pass the lesson ID from the request body
-    quiz_data = await generate_personalized_quiz(current_user.id, db, request.lessonId)
+    quiz_data = await generate_personalized_quiz(current_user.id, db, request.lessonId, model_backend=request.model_backend)
     
     if quiz_data.get("error"):
         raise HTTPException(
@@ -866,22 +962,74 @@ async def generate_ai_quiz(
 # ==========================================
 # 7. LOGS, FEEDBACK & INSIGHTS
 # ==========================================
-# (Rest of file is fine, just helper endpoints)
 @app.post("/api/log/lesson")
 async def log_lesson(request: LessonLogRequest, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     lesson = db.query(Lesson).filter(Lesson.id == request.lessonId).first()
     if not lesson:
         raise HTTPException(status_code=404, detail="Lesson not found")
+
+    # Check if student has already logged completion for this lesson
+    already_completed = db.query(Activity).filter(
+        Activity.user_id == current_user.id,
+        Activity.activity_type == "lesson_completed",
+        Activity.entity_type == "lesson",
+        Activity.entity_id == lesson.id
+    ).first() is not None
     
-    was_completed = lesson.completed
-    lesson.completed = request.completed
-    
-    if lesson.completed and not was_completed:
-        activity = Activity(user_id=current_user.id, activity_type="lesson_completed", entity_type="lesson", entity_id=lesson.id, description=f"Completed lesson: {lesson.title}")
+    if request.completed and not already_completed:
+        activity = Activity(
+            user_id=current_user.id,
+            activity_type="lesson_completed",
+            entity_type="lesson",
+            entity_id=lesson.id,
+            description=f"Completed lesson: {lesson.title}"
+        )
         db.add(activity)
-    
+        db.flush()
+        
+        # Dynamically recalculate and save Enrollment progress in the transaction
+        enrollment = db.query(Enrollment).filter(
+            Enrollment.student_id == current_user.id,
+            Enrollment.course_id == lesson.course_id
+        ).first()
+        if enrollment:
+            total_course_lessons = db.query(Lesson).filter(Lesson.course_id == lesson.course_id).count() or 1
+            completed_count = db.query(Activity).filter(
+                Activity.user_id == current_user.id,
+                Activity.activity_type == "lesson_completed",
+                Activity.entity_type == "lesson"
+            ).join(Lesson, Lesson.id == Activity.entity_id).filter(Lesson.course_id == lesson.course_id).count()
+            
+            enrollment.progress = min(100.0, round((completed_count / total_course_lessons) * 100, 2))
+            db.add(enrollment)
+            
+    elif not request.completed and already_completed:
+        # If toggling off, remove completion activity
+        db.query(Activity).filter(
+            Activity.user_id == current_user.id,
+            Activity.activity_type == "lesson_completed",
+            Activity.entity_type == "lesson",
+            Activity.entity_id == lesson.id
+        ).delete()
+        
+        enrollment = db.query(Enrollment).filter(
+            Enrollment.student_id == current_user.id,
+            Enrollment.course_id == lesson.course_id
+        ).first()
+        if enrollment:
+            total_course_lessons = db.query(Lesson).filter(Lesson.course_id == lesson.course_id).count() or 1
+            completed_count = db.query(Activity).filter(
+                Activity.user_id == current_user.id,
+                Activity.activity_type == "lesson_completed",
+                Activity.entity_type == "lesson"
+            ).join(Lesson, Lesson.id == Activity.entity_id).filter(Lesson.course_id == lesson.course_id).count()
+            
+            enrollment.progress = min(100.0, round((completed_count / total_course_lessons) * 100, 2))
+            db.add(enrollment)
+            
     db.commit()
     return {"success": True}
+
 
 @app.post("/api/feedback/lesson")
 async def feedback_lesson(request: LessonFeedbackRequest, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
@@ -1286,4 +1434,4 @@ async def upload_course_image(
         raise HTTPException(status_code=500, detail=f"Error uploading file: {str(e)}")
 
 if __name__ == "__main__":
-    uvicorn.run("main:app", host="0.0.0.0", port=3000, reload=True)
+    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=False)

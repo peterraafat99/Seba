@@ -55,11 +55,11 @@ def create_translation_prompt(message: str) -> str:
 
 # --- MAIN ENGINES ---
 
-async def analyze_sentiment(message: str):
+async def analyze_sentiment(message: str, model_backend: str = None):
     """
     Hybrid Pipeline: 
     1. Gatekeeper -> Checks if translation is needed.
-    2. Local LLM (Ollama/Gemini) -> Translates Egyptian Arabic to English.
+    2. LLM (Ollama/Gemini, based on model_backend) -> Translates Egyptian Arabic to English.
     3. RoBERTa (Local) -> Analyzes Emotion on CPU (non-blocking thread).
     """
     if not LOCAL_EMOTION_PIPELINE:
@@ -69,8 +69,8 @@ async def analyze_sentiment(message: str):
     try:
         # 2. LANGUAGE GATEKEEPER
         if contains_arabic(message):
-            print(f"[NLP] Arabic detected: '{message}' -> Translating via LLM...")
-            llm = get_llm_client()
+            print(f"[NLP] Arabic detected: '{message}' -> Translating via LLM ({model_backend or 'default'})...")
+            llm = get_llm_client(force_backend=model_backend)
             prompt = create_translation_prompt(message)
             translated_text = await llm.generate(prompt)
             # Strip any preamble the model might add
@@ -105,11 +105,11 @@ async def analyze_sentiment(message: str):
         }
 
 
-async def extract_learning_insight(original_message: str, translated_message: str) -> dict:
+async def extract_learning_insight(original_message: str, translated_message: str, model_backend: str = None) -> dict:
     """
-    Uses the local LLM to extract pedagogical insights for the teacher dashboard.
+    Uses the LLM (based on model_backend) to extract pedagogical insights for the teacher dashboard.
     """
-    llm = get_llm_client()
+    llm = get_llm_client(force_backend=model_backend)
 
     prompt = f"""
     You are an expert educational psychologist.

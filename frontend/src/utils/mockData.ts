@@ -345,3 +345,133 @@ export const mockUser = {
   email: 'john.doe@example.com',
   role: 'student',
 };
+
+// --- MULTI-SCHOOL, MULTI-CLASSROOM, & ARABIC NAME ROSTERS FOR MOCK MODE ---
+
+export interface MockSchool {
+  id: number;
+  name: string;
+  address?: string;
+  logo_url?: string;
+}
+
+export interface MockGrade {
+  id: number;
+  school_id: number;
+  name: string;
+  academic_year: string;
+}
+
+export interface MockClassroom {
+  id: number;
+  grade_id: number;
+  name: string;
+  room_number?: string;
+  capacity?: number;
+  camera_source?: string;
+  is_exam_room: boolean;
+}
+
+export interface MockUserType {
+  id: number;
+  name: string;
+  email: string;
+  role: string;
+  school_id: number | null;
+}
+
+export const mockSchools: MockSchool[] = [
+  { id: 1, name: 'مدرسة سيبا الثانوية (Seba High School)', address: 'القاهرة، مصر', logo_url: '' },
+  { id: 2, name: 'مدرسة الفارابي الدولية (Al-Farabi School)', address: 'الرياض، السعودية', logo_url: '' },
+  { id: 3, name: 'مدارس النيل الدولية (Nile Schools)', address: 'الجيزة، مصر', logo_url: '' }
+];
+
+export const mockGrades: MockGrade[] = [
+  // Seba High School
+  { id: 1, school_id: 1, name: 'الصف العاشر (Grade 10)', academic_year: '2025-2026' },
+  { id: 2, school_id: 1, name: 'الصف الحادي عشر (Grade 11)', academic_year: '2025-2026' },
+  // Al-Farabi
+  { id: 3, school_id: 2, name: 'Grade 10', academic_year: '2025-2026' },
+  { id: 4, school_id: 2, name: 'Grade 12', academic_year: '2025-2026' },
+  // Nile Schools
+  { id: 5, school_id: 3, name: 'الصف الحادي عشر (Grade 11)', academic_year: '2025-2026' }
+];
+
+export const mockClassrooms: MockClassroom[] = [
+  // Seba Grade 10
+  { id: 1, grade_id: 1, name: '١٠-أ مختبر العلوم (10-A Science Lab)', room_number: 'B202', capacity: 30, camera_source: '0', is_exam_room: false },
+  { id: 2, grade_id: 1, name: '١٠-ب قاعة الرياضيات (10-B Math Room)', room_number: 'B204', capacity: 25, camera_source: '0', is_exam_room: false },
+  // Seba Grade 11
+  { id: 3, grade_id: 2, name: '١١-أ مختبر الأحياء (11-A Biology Lab)', room_number: 'C301', capacity: 28, camera_source: '0', is_exam_room: false },
+  { id: 4, grade_id: 2, name: '١١-ب قاعة الفيزياء (11-B Physics)', room_number: 'C303', capacity: 30, camera_source: '0', is_exam_room: true },
+  // Al-Farabi
+  { id: 5, grade_id: 3, name: '10-Alpha Computer Room', room_number: 'D101', capacity: 20, camera_source: '0', is_exam_room: false },
+  { id: 6, grade_id: 4, name: '12-Beta Exam Hall', room_number: 'Gym-A', capacity: 100, camera_source: '0', is_exam_room: true }
+];
+
+export const mockUsers: MockUserType[] = [
+  // Seba Teachers
+  { id: 101, name: 'أ. أحمد صبحي (Ahmad Sobhy)', email: 'ahmad.sobhy@seba.edu', role: 'teacher', school_id: 1 },
+  { id: 102, name: 'أ. منى زكي (Mona Zaki)', email: 'mona.zaki@seba.edu', role: 'teacher', school_id: 1 },
+  { id: 103, name: 'أ. طارق الشريف (Tarek El Sherif)', email: 'tarek@seba.edu', role: 'teacher', school_id: 1 },
+  
+  // Seba Students
+  { id: 201, name: 'يوسف منصور (Youssef Mansour)', email: 'youssef@student.com', role: 'student', school_id: 1 },
+  { id: 202, name: 'كريم عبد العزيز (Karim Abdel Aziz)', email: 'karim@student.com', role: 'student', school_id: 1 },
+  { id: 203, name: 'ياسمين صبري (Yasmine Sabri)', email: 'yasmine@student.com', role: 'student', school_id: 1 },
+  { id: 204, name: 'أميرة خطاب (Amira Khattab)', email: 'amira@student.com', role: 'student', school_id: 1 },
+  { id: 205, name: 'شريف منير (Sherif Mounir)', email: 'sherif@student.com', role: 'student', school_id: 1 },
+  { id: 206, name: 'دينا الشربيني (Dina El Sherbiny)', email: 'dina@student.com', role: 'student', school_id: 1 },
+  { id: 207, name: 'محمد رمضان (Mohamed Ramadan)', email: 'mohamed.r@student.com', role: 'student', school_id: 1 },
+  { id: 208, name: 'فاتن حمامة (Faten Hamama)', email: 'faten@student.com', role: 'student', school_id: 1 },
+  { id: 209, name: 'أحمد زكي (Ahmed Zaki)', email: 'ahmed.z@student.com', role: 'student', school_id: 1 },
+  
+  // Al-Farabi Teachers & Students
+  { id: 104, name: 'أ. عمر سليمان (Omar Suleiman)', email: 'omar.s@farabi.edu', role: 'teacher', school_id: 2 },
+  { id: 210, name: 'فيصل العتيبي (Faisal Al Otaibi)', email: 'faisal@student.com', role: 'student', school_id: 2 },
+  { id: 211, name: 'نورة الدوسري (Noura Al Dawsari)', email: 'noura@student.com', role: 'student', school_id: 2 },
+  
+  // Parents
+  { id: 301, name: 'محمود منصور (Mahmoud Mansour)', email: 'mahmoud@parent.com', role: 'parent', school_id: 1 },
+  { id: 302, name: 'محمد صبري (Mohamed Sabri)', email: 'mohamed@parent.com', role: 'parent', school_id: 1 }
+];
+
+// Roster links for classrooms
+export const mockClassroomStudents = [
+  { id: 1, classroom_id: 1, student_id: 201, is_active: true },
+  { id: 2, classroom_id: 1, student_id: 202, is_active: true },
+  { id: 3, classroom_id: 1, student_id: 203, is_active: true },
+  { id: 4, classroom_id: 2, student_id: 204, is_active: true },
+  { id: 5, classroom_id: 2, student_id: 205, is_active: true },
+  { id: 6, classroom_id: 3, student_id: 206, is_active: true },
+  { id: 7, classroom_id: 3, student_id: 207, is_active: true },
+  { id: 8, classroom_id: 4, student_id: 208, is_active: true },
+  { id: 9, classroom_id: 4, student_id: 209, is_active: true },
+  { id: 10, classroom_id: 5, student_id: 210, is_active: true },
+  { id: 11, classroom_id: 6, student_id: 211, is_active: true }
+];
+
+export const mockClassroomTeachers = [
+  { id: 1, classroom_id: 1, teacher_id: 101, role: 'homeroom', subject: 'كيمياء (Chemistry)' },
+  { id: 2, classroom_id: 1, teacher_id: 102, role: 'subject', subject: 'فيزياء (Physics)' },
+  { id: 3, classroom_id: 2, teacher_id: 103, role: 'homeroom', subject: 'رياضيات (Mathematics)' },
+  { id: 4, classroom_id: 5, teacher_id: 104, role: 'homeroom', subject: 'Computer Science' }
+];
+
+// Classroom-to-Course mappings (allows showing multiple courses per classroom)
+export interface MockClassroomCourse {
+  classroom_id: number;
+  course_id: string;
+}
+
+export const mockClassroomCourses: MockClassroomCourse[] = [
+  // Class 1 (10-A Science Lab) has multiple courses:
+  { classroom_id: 1, course_id: '1' }, // Web Dev
+  { classroom_id: 1, course_id: '2' }, // Advanced React
+  // Class 2 (10-B Math Room) has multiple courses:
+  { classroom_id: 2, course_id: '3' }, // Data Science Python
+  { classroom_id: 2, course_id: '1' }, // Web Dev
+  // Class 3 (11-A Biology Lab) has multiple courses:
+  { classroom_id: 3, course_id: '2' }, // Advanced React
+  { classroom_id: 3, course_id: '3' }  // Data Science Python
+];

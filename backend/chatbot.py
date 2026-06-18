@@ -69,14 +69,27 @@ def unload_local_models():
 
 def clean_query_for_search(query: str) -> str:
     """Clean query by removing LaTeX math notation and special characters."""
+    # If the model writes a descriptive query, extract the core concept (before colon or period)
+    if ":" in query:
+        query = query.split(":")[0]
+    if "." in query:
+        query = query.split(".")[0]
+        
     # Remove LaTeX math delimiters and content: $...$ or $$...$$
     query = re.sub(r'\$+[^$]*\$+', '', query)
     # Remove LaTeX commands like \angle, \circ, etc.
     query = re.sub(r'\\[a-zA-Z]+\{?[^}]*\}?', '', query)
+    
     # Remove extra whitespace
     query = ' '.join(query.split())
     # Remove trailing periods and commas
     query = query.rstrip('.,;')
+    
+    # Keep it to a maximum of 8 words for search viability
+    words = query.split()
+    if len(words) > 8:
+        query = ' '.join(words[:8])
+        
     return query.strip()
 
 # --- ASYNC IMAGE INJECTOR ---
@@ -197,7 +210,7 @@ async def inject_real_images_async(text: str):
         return text
 
 # --- BACKGROUND TASK: SAVE MEMORY ---
-async def save_memory_background(user_id: int, user_message: str, translated_text: str, emotion: str, db: Session):
+async def save_memory_background(user_id: int, user_message: str, translated_text: str, emotion: str, db: Session, model_backend: str = None):
     try:
         # 1. Save Sentiment
         db.add(StudentSentiment(
@@ -209,7 +222,7 @@ async def save_memory_background(user_id: int, user_message: str, translated_tex
         ))
         
         # 2. Extract & Save Hybrid Memory
-        insight = await extract_learning_insight(user_message, translated_text)
+        insight = await extract_learning_insight(user_message, translated_text, model_backend=model_backend)
         if insight:
             import json
             
@@ -278,13 +291,24 @@ async def save_memory_background(user_id: int, user_message: str, translated_tex
         print(f"⚠️ Background Memory Error: {e}")
 
 # --- Main Chat Logic ---
-async def get_ai_response(user_message: str, lesson_id: int, user_id: int, db: Session, image_b64: str = None):
+async def get_ai_response(user_message: str, lesson_id: int, user_id: int, db: Session, image_b64: str = None, model_backend: str = None):
     
     clean_msg = user_message.lower().strip()
+    # Resolve the backend ONCE at the top so all sub-calls use the same backend
+    effective_backend = (model_backend or os.getenv("LLM_BACKEND", "ollama")).lower()
+    print(f"[Chat] Effective backend: {effective_backend}")
 
     # --- 0. SIMPLE GREETING HANDLER (Fast Response) ---
-    greeting_keywords = ["hi", "hello", "hey", "marhaba", "السلام عليكم", "ازيك", "ازيك يا"]
-    is_simple_greeting = any(keyword in clean_msg for keyword in greeting_keywords) and len(clean_msg) < 20
+    greeting_keywords = ["hi", "hello", "hey", "marhaba", "السلام عليكم", "ازيك", "ازيك يا", "اهلا", "أهلا", "أهلاً", "مرحبا", "يا هلا", "اهلين"]
+    # Extract alphanumeric words to verify whole word matches, preventing substring match (like "hi" in "this")
+    words = re.findall(r'\b\w+\b', clean_msg)
+    arabic_phrases = ["السلام عليكم", "ازيك يا", "يا هلا"]
+    
+    is_simple_greeting = False
+    if not image_b64:
+        has_greeting_word = any(word in words for word in ["hi", "hello", "hey", "marhaba", "ازيك", "اهلا", "أهلا", "أهلاً", "مرحبا", "اهلين"])
+        has_greeting_phrase = any(phrase in clean_msg for phrase in arabic_phrases)
+        is_simple_greeting = (has_greeting_word or has_greeting_phrase) and len(clean_msg) < 25
     
     if is_simple_greeting:
         # Get lesson title for context
@@ -293,12 +317,16 @@ async def get_ai_response(user_message: str, lesson_id: int, user_id: int, db: S
         student = db.query(User).filter(User.id == user_id).first()
         student_name = student.name if student else "there"
         
-        return f"Hi {student_name}! 👋 Ready to explore **{lesson_title}**? Ask me anything about the topics covered here, or type 'quiz me' if you want to test your understanding!"
+        is_arabic = any(keyword in clean_msg for keyword in ["السلام عليكم", "ازيك", "اهلا", "أهلا", "أهلاً", "مرحبا", "يا هلا", "اهلين"])
+        if is_arabic:
+            return f"أهلاً {student_name}! 👋 هل أنت مستعد لاستكشاف درس **{lesson_title}**؟ اسألني أي سؤال حول الموضوع، أو اكتب 'اختبرني' إذا كنت تريد اختبار فهمك!"
+        else:
+            return f"Hi {student_name}! 👋 Ready to explore **{lesson_title}**? Ask me anything about the topics covered here, or type 'quiz me' if you want to test your understanding!"
 
     # --- 1. INTENT DETECTION: QUIZ (Preserved) ---
     if "quiz" in clean_msg or "test me" in clean_msg:
         print(f"🎯 Quiz Intent Detected for Lesson ID: {lesson_id}")
-        quiz_data = await generate_personalized_quiz(user_id, db, lesson_id)
+        quiz_data = await generate_personalized_quiz(user_id, db, lesson_id, model_backend=effective_backend)
         
         if quiz_data.get("error"):
             return "I couldn't generate a quiz right now. Please try again later."
@@ -322,9 +350,9 @@ async def get_ai_response(user_message: str, lesson_id: int, user_id: int, db: S
 
     print(f"🚀 Processing message for lesson: {current_lesson_title}")
 
-    # Step 3.1: Sentiment / Translation (Calls Ollama if Arabic is present)
+    # Step 3.1: Sentiment / Translation (uses whichever LLM backend is active)
     try:
-        sentiment_result = await analyze_sentiment(user_message)
+        sentiment_result = await analyze_sentiment(user_message, model_backend=effective_backend)
     except Exception as e:
         print(f"⚠️ Sentiment Pipeline Warning: {e}")
         sentiment_result = {"top_emotion": "neutral", "translated_text": user_message}
@@ -332,7 +360,7 @@ async def get_ai_response(user_message: str, lesson_id: int, user_id: int, db: S
     emotion = sentiment_result.get("top_emotion", "neutral")
     translated_text = sentiment_result.get("translated_text", user_message)
 
-    # Step 3.2: RAG Search (Loads embedding model lazily)
+    # Step 3.2: RAG Search (always uses local BGE-M3 embeddings, regardless of LLM backend)
     kb_instance = get_kb()
     should_search_rag = (len(clean_msg) > 3) and (kb_instance is not None)
     if should_search_rag:
@@ -420,7 +448,7 @@ async def get_ai_response(user_message: str, lesson_id: int, user_id: int, db: S
         pedagogical_strategy = "The student is CONFUSED. Do not just give the answer; explain the 'Why' behind it using simple analogies."
 
     # Dynamic Formatting & Visuals based on Persona
-    visuals_instruction = "4. **VISUALS:** If explaining a geometric shape or complex concept, include an image tag: [Image of concept]."
+    visuals_instruction = "4. **VISUALS:** If explaining a geometric shape or complex concept, or if the student asks for a visual, diagram, or picture, you MUST include one or more image tags: [Image of concept]. NEVER apologize or say you cannot show images. The student portal automatically renders these image tags as live diagrams/illustrations. CRITICAL: The search query inside '[Image of ...]' MUST be a short, simple, 2-5 word keyword search query (e.g., '[Image of real numbers Venn diagram]' or '[Image of number line]') so that Google Image search can find it. Do NOT write long descriptions or details inside the image tag."
     depth_instruction = "Keep your answers detailed but easy to follow. Keep paragraphs short and readable."
     
     if student and student.persona_profile:
@@ -432,17 +460,23 @@ async def get_ai_response(user_message: str, lesson_id: int, user_id: int, db: S
             depth_instruction = "CRITICAL: Provide a very detailed, in-depth explanation. Do not hold back information."
             
         if "visual" in profile_str or "picture" in profile_str:
-            visuals_instruction = "4. **VISUALS:** CRITICAL: The student is a visual learner. You MUST include image tags like [Image of concept] frequently."
+            visuals_instruction = "4. **VISUALS:** CRITICAL: The student is a visual learner. You MUST include image tags like [Image of concept] frequently. NEVER say 'I cannot display images' or 'Since I am a text-based model'. The frontend client automatically converts [Image of query] tags into real Google images for the student. If explaining any geometric shape or concept, or if requested, output one or more '[Image of query]' tags (e.g., '[Image of number line]'). Keep the search query inside '[Image of ...]' short and simple (2-5 words) and do NOT write descriptions inside the tag."
 
-    final_prompt = f"""
+    # Format Counselor/Psychologist report summary
+    counselor_summary_txt = ""
+    if student and student.counselor_report_summary:
+        counselor_summary_txt = f"\n    - School Psychologist/Counselor Profile Summary: {student.counselor_report_summary}"
+
+    system_prompt = f"""
     You are 'Seba', an expert AI Math Tutor for the Egyptian National Curriculum.
     
     **STUDENT PROFILE (GLOBAL TRAITS):**
     - Name: {student_name}
     - Detected Emotion: {emotion}
-    {persona_txt}
+    {persona_txt}{counselor_summary_txt}
     
     **SITUATIONAL MEMORIES (RELEVANT TO QUERY):**
+
     {notes_txt}
     
     **CURRENT LESSON (PRIMARY FOCUS):**
@@ -451,8 +485,6 @@ async def get_ai_response(user_message: str, lesson_id: int, user_id: int, db: S
     {current_lesson_content}
     
     {rag_context}
-    
-    **USER MESSAGE:** "{user_message}"
     
     **CORE INSTRUCTIONS:**
     1. **PEDAGOGY:** {pedagogical_strategy}
@@ -479,12 +511,17 @@ async def get_ai_response(user_message: str, lesson_id: int, user_id: int, db: S
     - {depth_instruction}
     - Always cite lesson sources when using reference material
     
-    Answer the student now:
+    CRITICAL RESTRICTION:
+    DO NOT output your internal thought process, reasoning, lesson plan, or repeat the prompt structure.
+    DO NOT use labels like "Greeting:" or "Explanation:".
+    Output ONLY the final, direct response to the student as if you are speaking to them in a chat window.
     """
+
+    user_prompt = user_message
 
     # --- 7. Append image instruction to prompt if image was sent ---
     if image_b64:
-        final_prompt += """
+        user_prompt += """
 
 **STUDENT UPLOADED AN IMAGE:**
 The student sent a photo (likely a handwritten math problem or textbook question).
@@ -495,13 +532,13 @@ If the image is unclear, describe what you can see and ask the student to clarif
 
     # Free up RAM before making the Ollama API call (if caching is disabled)
     cache_local = os.getenv("CACHE_LOCAL_MODELS", "false").lower() == "true"
-    if not cache_local and os.getenv("LLM_BACKEND", "ollama").lower() == "ollama":
+    if not cache_local and effective_backend == "ollama":
         unload_local_models()
 
-    print(f"🤖 Generating response via {get_llm_client().backend_name()} ...")
+    llm = get_llm_client(force_backend=effective_backend)
+    print(f"🤖 Generating response via {llm.backend_name()} ...")
     try:
-        llm = get_llm_client()
-        response_text = await llm.generate(final_prompt, image_b64=image_b64)
+        response_text = await llm.generate(prompt=user_prompt, system_instruction=system_prompt, image_b64=image_b64)
     except RuntimeError as e:
         # Ollama offline or model not loaded — give a helpful error
         print(f"❌ LLM error: {e}")
@@ -511,15 +548,16 @@ If the image is unclear, describe what you can see and ask the student to clarif
     final_text = await inject_real_images_async(response_text)
 
     # --- 4. BACKGROUND MEMORY (Run at the very end to prevent memory overlap during LLM load) ---
-    asyncio.create_task(save_memory_background(user_id, user_message, translated_text, emotion, db))
+    asyncio.create_task(save_memory_background(user_id, user_message, translated_text, emotion, db, effective_backend))
 
     return final_text
 
 # --- ACTIVE LEARNING MODE ---
 from models import ActiveLearningSession
 
-async def start_active_learning(lesson_id: int, user_id: int, db: Session):
+async def start_active_learning(lesson_id: int, user_id: int, db: Session, model_backend: str = None):
     import json
+    effective_backend = (model_backend or os.getenv("LLM_BACKEND", "ollama")).lower()
     sys_lesson = db.query(Lesson).filter(Lesson.id == lesson_id).first()
     if not sys_lesson:
         return {"error": "Lesson not found"}
@@ -545,7 +583,7 @@ async def start_active_learning(lesson_id: int, user_id: int, db: Session):
     if len(history) > 0:
         return {"message": history[-1]["content"]}
         
-    prompt = f"""
+    system_instruction = f"""
     You are an active learning AI tutor. You are about to start teaching a lesson.
     
     STUDENT PROFILE:
@@ -561,10 +599,17 @@ async def start_active_learning(lesson_id: int, user_id: int, db: Session):
     2. Pick the FIRST logical part/concept to teach. Do not teach everything at once.
     3. Explain it simply, adapting to the student's profile.
     4. End your response with a single question to check their understanding of this specific part.
+    
+    CRITICAL RESTRICTION:
+    DO NOT output your internal thought process, reasoning, lesson plan, or repeat the prompt structure.
+    DO NOT use labels like "Topic 1:", "Greeting:", or "Content breakdown:".
+    Output ONLY the final, direct response to the student as if you are speaking to them in a chat window.
     """
     
-    llm = get_llm_client()
-    response_text = await llm.generate(prompt)
+    user_prompt = "Start the lesson. Introduce yourself and begin teaching the first logical part."
+    
+    llm = get_llm_client(force_backend=effective_backend)
+    response_text = await llm.generate(prompt=user_prompt, system_instruction=system_instruction)
     final_text = await inject_real_images_async(response_text)
     
     history.append({"role": "assistant", "content": final_text})
@@ -573,7 +618,7 @@ async def start_active_learning(lesson_id: int, user_id: int, db: Session):
     
     return {"message": final_text}
 
-async def process_active_learning(user_message: str, lesson_id: int, user_id: int, db: Session):
+async def process_active_learning(user_message: str, lesson_id: int, user_id: int, db: Session, model_backend: str = None):
     import json
     sys_lesson = db.query(Lesson).filter(Lesson.id == lesson_id).first()
     session = db.query(ActiveLearningSession).filter_by(user_id=user_id, lesson_id=lesson_id, is_completed=False).first()
@@ -588,25 +633,36 @@ async def process_active_learning(user_message: str, lesson_id: int, user_id: in
     for msg in history[-7:]: # Keep last 7 turns
         history_txt += f"{msg['role'].upper()}: {msg['content']}\n\n"
         
-    prompt = f"""
+    system_instruction = f"""
     You are an active learning AI tutor teaching a lesson part-by-part.
     
     FULL LESSON CONTENT:
     {sys_lesson.title}
     {sys_lesson.content_en or sys_lesson.content or sys_lesson.content_ar}
     
-    RECENT CONVERSATION (Your teaching & their answers):
-    {history_txt}
-    
     INSTRUCTIONS:
     1. Evaluate the USER's last answer to your question.
     2. If their answer is correct: Praise them, explain the NEXT logical part of the lesson, and ask a new question about that next part.
     3. If their answer is incorrect or partial: Gently correct them, re-explain the CURRENT part in a different way, and ask another question to check understanding.
     4. If the entire lesson is completed and they understood the last part, congratulate them and say "[LESSON_COMPLETE]" at the very end of your response.
+    
+    CRITICAL RESTRICTION:
+    DO NOT output your internal thought process, reasoning, lesson plan, or repeat the prompt structure.
+    DO NOT use labels like "Evaluation:", "Next step:", or "Explanation:".
+    Output ONLY the final, direct response to the student as if you are speaking to them in a chat window.
     """
     
-    llm = get_llm_client()
-    response_text = await llm.generate(prompt)
+    user_prompt = f"""
+Here is the recent history of our conversation followed by my latest answer:
+
+{history_txt}
+
+Please evaluate my answer and respond.
+"""
+    
+    effective_backend = (model_backend or os.getenv("LLM_BACKEND", "ollama")).lower()
+    llm = get_llm_client(force_backend=effective_backend)
+    response_text = await llm.generate(prompt=user_prompt, system_instruction=system_instruction)
     final_text = await inject_real_images_async(response_text)
     
     is_complete = "[LESSON_COMPLETE]" in final_text

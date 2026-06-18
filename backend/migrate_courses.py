@@ -2,8 +2,11 @@
 import sqlite3
 import datetime
 
-rag_db_path = "rag_content.db"
-app_db_path = "learning_platform.db"
+import os
+db_dir = os.path.dirname(os.path.abspath(__file__))
+rag_db_path = os.path.join(db_dir, "rag_content.db")
+app_db_path = os.path.join(db_dir, "learning_platform.db")
+
 
 def migrate():
     print("Starting migration...")
@@ -13,7 +16,7 @@ def migrate():
     rag_cursor = rag_conn.cursor()
     
     # Fetch all lessons from RAG DB
-    rag_cursor.execute("SELECT title, description, video_url, duration, `order`, content FROM Lessons")
+    rag_cursor.execute("SELECT title, description, video_url, duration, `order`, content FROM lessons")
     rag_lessons = rag_cursor.fetchall()
     print(f"Fetched {len(rag_lessons)} lessons from RAG DB.")
     rag_conn.close()

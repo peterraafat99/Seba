@@ -8,7 +8,7 @@ from llm_client import get_llm_client
 # Import your models
 from models import User, Lesson, Course, StudentSentiment
 
-async def generate_personalized_quiz(user_id: int, db: Session, target_lesson_id: int):
+async def generate_personalized_quiz(user_id: int, db: Session, target_lesson_id: int, model_backend: str = None):
     """
     Generates a quiz covering the TARGET lesson AND reviewing PREVIOUS lessons.
     Adjusts difficulty based on student sentiment.
@@ -104,7 +104,7 @@ async def generate_personalized_quiz(user_id: int, db: Session, target_lesson_id
 
     # --- 4. GENERATE & RETURN ---
     try:
-        llm = get_llm_client()
+        llm = get_llm_client(force_backend=model_backend)
         # Add explicit JSON instruction since local models don't support mime type enforcement
         json_prompt = prompt + """
 
