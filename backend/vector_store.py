@@ -56,13 +56,15 @@ def get_gemini_embeddings(texts: list | str, is_query: bool = False) -> np.ndarr
             except ResourceExhausted as e:
                 if attempt == retries - 1:
                     raise e
+                safe_err = str(e).encode('ascii', errors='replace').decode('ascii')
                 print(f"Rate limit hit (429). Retrying in {delay} seconds (attempt {attempt+1}/{retries})...")
                 time.sleep(delay)
                 delay *= 2
             except Exception as e:
                 if attempt == retries - 1:
                     raise e
-                print(f"API error: {e}. Retrying in {delay} seconds (attempt {attempt+1}/{retries})...")
+                safe_err = str(e).encode('ascii', errors='replace').decode('ascii')
+                print(f"API error: {safe_err}. Retrying in {delay} seconds (attempt {attempt+1}/{retries})...")
                 time.sleep(delay)
                 delay *= 2
 

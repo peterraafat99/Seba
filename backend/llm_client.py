@@ -286,20 +286,21 @@ class GeminiClient(LLMClient):
             err_str = str(e)
             # Surface a clear, actionable error message
             if "API_KEY_INVALID" in err_str or "invalid" in err_str.lower():
-                msg = f"❌ Gemini API Key is INVALID. Check GEMINI_API_KEY in .env\nDetails: {err_str}"
+                msg = f"[ERROR] Gemini API Key is INVALID. Check GEMINI_API_KEY in .env\nDetails: {err_str}"
             elif "PERMISSION_DENIED" in err_str or "403" in err_str:
-                msg = f"❌ Gemini API Key has no permission for model '{self.model_name}'. Check your Google AI Studio plan.\nDetails: {err_str}"
+                msg = f"[ERROR] Gemini API Key has no permission for model '{self.model_name}'. Check your Google AI Studio plan.\nDetails: {err_str}"
             elif "NOT_FOUND" in err_str or "404" in err_str:
-                msg = f"❌ Model '{self.model_name}' not found in Gemini API. Check CLOUD_MODEL in .env\nValid IDs: gemma-4-31b-it, gemini-2.5-flash, gemini-2.0-flash\nDetails: {err_str}"
+                msg = f"[ERROR] Model '{self.model_name}' not found in Gemini API. Check CLOUD_MODEL in .env\nValid IDs: gemma-4-31b-it, gemini-2.5-flash, gemini-2.0-flash\nDetails: {err_str}"
             elif "QUOTA" in err_str or "429" in err_str or "quota" in err_str.lower():
-                msg = f"❌ Gemini API quota exceeded. Wait and retry, or upgrade your plan.\nDetails: {err_str}"
+                msg = f"[ERROR] Gemini API quota exceeded. Wait and retry, or upgrade your plan.\nDetails: {err_str}"
             elif "timeout" in err_str.lower():
-                msg = f"❌ Gemini API timed out. The model may be overloaded.\nDetails: {err_str}"
+                msg = f"[ERROR] Gemini API timed out. The model may be overloaded.\nDetails: {err_str}"
             else:
-                msg = f"❌ Gemini API Error: {err_str}"
+                msg = f"[ERROR] Gemini API Error: {err_str}"
             
             logger.error(f"[Gemini] {msg}")
-            print(f"\n{'='*60}\n{msg}\n{'='*60}\n")
+            safe_msg = msg.encode('ascii', errors='replace').decode('ascii')
+            print(f"\n{'='*60}\n{safe_msg}\n{'='*60}\n")
             raise RuntimeError(msg)
 
 

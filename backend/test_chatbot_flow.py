@@ -29,11 +29,18 @@ async def main():
         )
         
         print("\n=================== CHATBOT RESPONSE ===================")
-        print(response)
+        if isinstance(response, dict):
+            import pprint
+            safe_widget = {k: (str(v).encode('ascii', errors='replace').decode('ascii') if isinstance(v, str) else v) for k, v in response.items()}
+            pprint.pprint(safe_widget)
+        else:
+            safe_response = str(response).encode('ascii', errors='replace').decode('ascii')
+            print(safe_response)
         print("========================================================\n")
         
     except Exception as e:
-        print(f"Error during chatbot test: {e}")
+        safe_err = str(e).encode('ascii', errors='replace').decode('ascii')
+        print(f"Error during chatbot test: {safe_err}")
     finally:
         db.close()
 

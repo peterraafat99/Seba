@@ -1,5 +1,5 @@
 # Seba: School Management, Online Learning & Real-time Classroom Analytics System
-## Complete System Guide & Developer Architecture Specification
+## Complete System Developer Guide & Architecture Specification
 
 Seba is a modern, bilingual (Arabic/English) **School Management System & Online Learning Platform** tailored to the Egyptian National Curriculum. It integrates virtual learning modules with an advanced **Computer Vision (CV) Real-time Focus & Proctoring Suite**, a hardware **NFC Attendance Subsystem**, and a **Cognitive AI Chatbot & RAG Engine**.
 
@@ -50,9 +50,10 @@ Seba implements role-based access controls to partition dashboards and capabilit
 The attendance subsystem bridges physical RFID/NFC hardware with student profiles in the database:
 
 ### 1. Hardware Interface (`nfc_bridge.py` & `nfc_listener.py`)
-- **Connection:** An Arduino or dedicated RFID/NFC reader module (e.g. RC522 or PN532) connects to the host machine via a USB serial interface.
+- **Connection:** An Arduino or ESP32-based RFID/NFC reader module (e.g. RC522 or PN532) connects to the host machine via a USB serial interface.
 - **Protocol:** Serial connection established over COM ports (or `/dev/ttyUSB` on Linux) configured at **9600 baud rate**.
-- **Listener Daemon:** `nfc_listener.py` runs as a persistent background process. It polls the COM port for raw card UIDs, sanitizes the inputs, and sends structured requests to the attendance endpoint.
+- **ESP32 Code (`esp32_nfc_code.ino`):** Scans Mifare NFC cards and outputs the UID as a clean hex string over the Serial interface.
+- **Listener Daemon (`nfc_listener.py`):** Runs as a persistent background process. It polls the COM port for raw card UIDs, sanitizes the inputs, and sends structured HTTP POST requests to the backend's scan endpoint.
 
 ### 2. Enrollment & Scanning Flow
 1. **Card Registration (`/api/attendance/enroll_card`):**
@@ -62,7 +63,7 @@ The attendance subsystem bridges physical RFID/NFC hardware with student profile
 2. **Daily Scanning (`/api/attendance/scan`):**
    - When a student taps their card in a physical classroom, the listener captures the UID.
    - The backend checks `classroom_students` to verify that the student is registered.
-   - A new attendance record is logged, updating the classroom's active attendance roster.
+   - A new attendance record is logged in the `attendance_records` table, updating the classroom's active attendance roster.
 
 ---
 
@@ -98,9 +99,9 @@ To optimize CPU/GPU cycles on host machines, the CV pipeline processes frames in
 - **Frame 0 (Anchor Frame):**
   - **RetinaFace Detection:** Locates all facial bounding boxes and landmarks.
   - **ArcFace Recognition:** Extracts 512-dimensional vector embeddings for each face.
-  - **FAISS Database Lookup:** Performs a cosine similarity search against enrolled student face profiles. If a match exceeds the threshold (e.g. `>0.6` similarity), the bounding box is labeled with the `student_id`. Unrecognized faces are flagged as `unknown_face`.
+  - **FAISS Database Lookup:** Performs a cosine similarity search against enrolled student face profiles. If a match exceeds the threshold (cosine similarity `>0.6`), the bounding box is labeled with the `student_id`. Unrecognized faces are flagged as `unknown_face`.
 - **Frames 1–29 (Tracking Frames):**
-  - Skip heavy face recognition.
+  - Skips heavy face recognition.
   - **ByteTrack (Supervision):** Performs object tracking using Kalman filters. It maintains bounding box associations between consecutive frames, locking the `student_id` assigned on the anchor frame.
   - Re-anchoring occurs every 30 frames to correct track drift or identify newly arrived students.
 
@@ -109,20 +110,30 @@ Instead of running heavy 3D gaze estimation networks, Seba estimates Pitch, Yaw,
 - **Keypoints extracted:** Left eye pupil ($E_L$), right eye pupil ($E_R$), nose tip ($N$), left mouth corner ($M_L$), right mouth corner ($M_R$).
 - **Calculations:**
   - **Yaw (Horizontal turn):** Distance ratio from nose tip to eyes:
-    $$\text{Yaw Ratio} = \frac{N_x - E_{L,x}}{E_{R,x} - E_{L,x}}$$
-    A ratio close to `0.5` represents looking straight. Significant deviations indicate looking left or right.
-  - **Pitch (Vertical tilt):** Distance ratio from nose tip to eye midpoint:
-    $$\text{Pitch Ratio} = \frac{N_y - \frac{E_{L,y} + E_{R,y}}{2}}{\text{Face Height}}$$
-    Values out of standard bounds represent looking up or down.
+    $$d_L = \|E_L - N\|_2, \quad d_R = \|E_R - N\|_2$$
+    $$\text{Yaw Ratio} = \frac{d_L - d_R}{d_L + d_R + 10^{-6}}$$
+    $$\text{Yaw (Degrees)} = \text{Yaw Ratio} \times 130.0$$
+    A ratio close to `0.0` represents looking straight. Positive values indicate turning right; negative values indicate turning left.
+  - **Pitch (Vertical tilt):** Distance ratio of the nose relative to the eye-mouth vertical baseline:
+    $$\text{Eye Midpoint } (E_{\text{mid}}) = \frac{E_L + E_R}{2}, \quad \text{Mouth Midpoint } (M_{\text{mid}}) = \frac{M_L + M_R}{2}$$
+    $$\text{Face Height } (H_f) = \|E_{\text{mid}} - M_{\text{mid}}\|_2$$
+    $$\text{Nose Position } (P_N) = \frac{(N - E_{\text{mid}}) \cdot (M_{\text{mid}} - E_{\text{mid}})}{H_f^2}$$
+    $$\text{Pitch (Degrees)} = -(P_N - 0.38) \times 130.0$$
+    Neutral position is typically around `0.38`. Deviations compute the vertical pitch angle.
+  - **Roll (Sideways tilt):** Angle of the inter-ocular line:
+    $$dy = E_{R,y} - E_{L,y}, \quad dx = E_{R,x} - E_{L,x}$$
+    $$\text{Roll (Degrees)} = \text{atan2}(dy, dx) \times \frac{180}{\pi}$$
+    Aligned to range from $-90^\circ$ to $+90^\circ$ relative to upright orientation.
 - **Benefit:** 100% stable, math-error free, and extremely fast, avoiding the VRAM limits of deep spatial estimators.
 
 ### 3. Focus Finite State Machine (FSM)
 Each tracked student's pitch and yaw inputs are evaluated against a state machine configured by classroom settings:
 
-| Metric | Classroom Mode | Exam Proctoring Mode |
+| Metric | Classroom Mode (`is_exam=False`) | Exam Proctoring Mode (`is_exam=True`) |
 | :--- | :--- | :--- |
-| **Distraction Threshold** | Continuous pitch/yaw deviation for **>10 seconds**. | Continuous pitch/yaw deviation for **>2 seconds**. |
-| **Lateral Glance** | Not recorded. | Yaw ratio shifts toward neighbors for **>1.5 seconds** flags a `neighbor_glance`. |
+| **Distraction Threshold** | Continuous pitch/yaw deviation for **>3.0 seconds**. | Continuous pitch/yaw deviation for **>2.0 seconds**. |
+| **Instant Distraction** | Yaw deviation exceeds **$35^\circ$** immediately flags distraction. | Yaw deviation exceeds **$35^\circ$** immediately flags distraction. |
+| **Lateral Glance** | Not recorded. | Yaw deviation toward seat-neighbors ($>22^\circ$) for **>1.5 seconds** flags a `neighbor_glance`. |
 | **Rapid Scan** | Not recorded. | Direction reversals (Left-Right-Left) **>3 times in 5 seconds** flags a `rapid_scan` cheating alert. |
 
 ### 4. WebSocket Broadcasting
@@ -137,40 +148,111 @@ The online learning portal features a bilingual AI tutoring companion.
 
 ### 1. Bilingual Sentiment Analysis Flow
 To adapt to Egyptian students, Seba implements a hybrid sentiment pipeline:
-1. **Egyptian Arabic Sentiment:** Uses a local lookup lexicon (`EgySenti`) to detect local dialects (e.g. *مش فاهم*, *متضايق*, *حزين*).
+1. **Egyptian Arabic Sentiment:** Uses a local lookup lexicon (`EgySenti` regex matches) to detect local dialects (e.g. *مش فاهم*, *متضايق*, *حزين*).
 2. **Translation Pipeline:** If the text contains Arabic, it is translated to English using a translation API or local PyTorch translators.
 3. **Deep Emotion Classification:** The English text is sent to a HuggingFace `RoBERTa-base-go_emotions` pipeline. It parses the text into 28 discrete emotions (e.g. `confusion`, `sadness`, `excitement`, `curiosity`).
 4. **Sentiment Logs:** Labels are saved to the `student_sentiments` table alongside the Cairo local timestamp.
 
-### 2. Retrieval-Augmented Generation (RAG) System
-Seba retrieves math explanations from localized Egyptian curriculum documents:
+### 2. Hybrid Retrieval-Augmented Generation (RAG) System
+Seba retrieves math explanations from localized Egyptian curriculum documents using a hybrid search and re-ranking architecture:
+
+```
+                  ┌──────────────────────┐
+                  │    Student Query     │
+                  └──────────┬───────────┘
+                             │
+            ┌────────────────┴────────────────┐
+            ▼                                 ▼
+   Vector Search (FAISS)              Lexical Search (BM25)
+   - BGE-M3 / Gemini Embeds           - Tokenized Keywords
+            │                                 │
+            └────────────────┬────────────────┘
+                             │
+                             ▼
+                    Course ID Filtering
+                             │
+                             ▼
+                   Combined Candidates (10)
+                             │
+                             ▼
+                  Cross-Encoder Reranking
+               (ms-marco-MiniLM-L-6-v2 CPU)
+                             │
+                             ▼
+                    Top 3 Reranked Chunks
+                             │
+                             ▼
+                    LLM Prompt Injection
+```
+
 - **Ingestion:** Math textbook PDFs are parsed, segmented into semantic blocks (300-token chunks with 50-token overlap), and cleaned of artifacts.
 - **Embeddings:** Chunks are vectorized using either **BGE-M3 (local)** or **Gemini Embedding API** (`models/gemini-embedding-001`).
 - **Vector Storage:** Embeddings are written to a local FAISS index.
+- **Lexical Storage:** Chunks are tokenized and loaded into a `BM25Okapi` index.
 - **Query Pipeline:**
-  1. Student asks a question.
-  2. The system embeds the query and performs a FAISS cosine similarity search.
-  3. Retrieval results are re-ranked using a Cross-Encoder to select the top 3 most relevant curriculum matches.
-  4. Selected texts are injected into the LLM system prompt to generate accurate, localized responses.
+  1. **Dual Retrieval:** The system embeds the query and retrieves the top 10 candidates from FAISS (semantic) and the top 10 candidates from BM25 (lexical).
+  2. **In-Context Course Filtering:** Filter candidate chunks based on active course IDs (e.g., mapping generic course ID 1 to Term 1 Course ID 6 or Term 2 Course ID 7) to enforce logical scoping.
+  3. **Cross-Encoder Re-ranking:** Combined candidate chunks are scored via a CPU-based local `cross-encoder/ms-marco-MiniLM-L-6-v2` model.
+  4. **Scope Management & Disclaimer Router:**
+     - **In-Scope:** If retrieval matches the current lesson title, the tutor focuses strictly on this content.
+     - **Out-of-Scope (Reference Curriculum):** If the topic is found in the curriculum but outside the current lesson, the response is generated but prefixed with:
+       `⚠️ Note: This topic is covered in [Lesson Name], not in our current lesson ([Current Lesson]). Here's what you need to know:`
+       and cites the source lesson clearly as `[Term X LesY]`.
+     - **Completely Unknown:** If not in current lesson or reference materials, the chatbot declines politely and redirects the student to the current lesson content.
 
 ### 3. Active Learning & Math OCR
 - **Active Learning:** A guided dialogue mode. The chatbot poses a math problem and walks the student through step-by-step solutions, loading/saving conversation memory using `active_learning_sessions` history logs.
 - **Multimodal OCR:** The student can upload a photo of a handwritten math problem. The image is parsed via OCR, converted to LaTeX markdown, and explained by the tutor.
-- **Voice Pipeline:** Student speech is transcribed using STT (Speech-to-Text) models, processed by the RAG model, and read back using TTS (Text-to-Speech).
+- **Voice Pipeline:**
+  - **Speech-to-Text (STT):** Transcribes audio bytes utilizing Groq Cloud's `whisper-large-v3` API (zero local VRAM, free tier).
+  - **Text-to-Speech (TTS):** Local pyttsx3 synthesis engine. Selecting Arabic voices if language is `ar` (searching system voices containing "arabic" or "ar") and writing output to WAV bytes for frontend playback.
 
 ### 4. Mood-Adaptive Quiz Engine
-When a student requests a quiz ( egip. Arabic trigger words like *اختبرني*, *كويز*, or English *quiz me*):
-1. The engine checks the student's last 5 sentiment entries in the `student_sentiments` table.
-2. If any recent entries show high anxiety, sadness, or confusion (e.g., `sadness`, `confusion`, `fear`, `nervousness`), the quiz engine adapts:
-   - Sets the quiz difficulty to `EASY` to build confidence.
-   - Adjusts the tone of the quiz title (e.g., *"Confidence Booster Assessment"*) and the tutor's feedback to be highly supportive.
-3. If the student has been positive and focused, the difficulty scales up to `MEDIUM` or `HARD`.
+When a student requests a quiz (Egyptian Arabic trigger words like *اختبرني*, *كويز*, or English *quiz me*):
+1. **Trigger Phrase Parsing:** Recognizes intent from explicit phrases or standalone nouns combined with politeness markers.
+2. **Sentiment Check:** The engine checks the student's last 5 sentiment entries in the `student_sentiments` table.
+3. **Adaptation Strategy:**
+   - If any recent entries show high anxiety, sadness, or confusion (e.g. `sadness`, `confusion`, `fear`, `nervousness`), the quiz engine adapts:
+     - Sets the quiz difficulty to `EASY` to build confidence.
+     - Adjusts the tone of the quiz title (e.g. *"Confidence Booster Assessment"*) and tutor feedback to be highly supportive.
+   - If the student has been positive and focused, the difficulty scales up to `MEDIUM` or `HARD`.
+4. **Spaced Repetition:** Generates 5 questions: Questions 1, 2, 4, and 5 cover the current lesson. Question 3 is seeded as a review question from previous lessons (looking back up to 3 past lessons).
+5. **Database Persistence:** Saves the generated quiz to the `quizzes` and `quiz_questions` tables for structured grading.
+
+---
+
+## 👩‍🏫 Automated Psychologist Insights & Teacher Notes
+
+Seba implements a background cognitive memory pipeline that automatically extracts, merges, and recalls pedagogical observations:
+
+### 1. AI Extraction Flow
+- At the end of chat sessions, a background thread runs `extract_learning_insight` in `nlp_engine.py`.
+- It prompts the LLM to analyze the student's messages for specific learning indicators:
+  - Specific **misconceptions** (e.g. "Confused by fractions").
+  - Specific **prerequisite knowledge gaps** (e.g. "Struggles with division").
+  - Specific **strengths or interests** (e.g. "Excels at geometry").
+- The pipeline produces a concise **6-word maximum note**.
+
+### 2. Semantic Duplicate Merging & Weighting
+- The system embeds the extracted note content using BGE-M3 or Gemini.
+- It compares this embedding to the student's existing notes in the `teacher_notes` table.
+- **Merging Threshold:** If the cosine similarity between the new note and an existing note exceeds **`0.85`**:
+  - The new duplicate note is discarded.
+  - The existing note's **`weight`** is incremented by **`0.5`** to highlight this recurring learning pattern.
+- If no duplicate is found, the note is saved as a new entry with an initial weight (typically `1.5`).
+
+### 3. Dynamic Memory Recall (In-Context)
+- When a student initiates a chat, the chatbot embeds the user's message.
+- It computes the cosine similarity between the query embedding and all of the student's stored notes:
+  $$\text{Score} = \text{Similarity}(V_{\text{query}}, V_{\text{note}}) \times \text{Weight}_{\text{note}}$$
+- Notes are sorted by Score, and the **top 3 notes** are injected as `SITUATIONAL MEMORIES` in the system prompt.
+- This allows Seba to dynamically tailor its pedagogy to the student's persistent misconceptions or strengths.
 
 ---
 
 ## 🗄️ Database Tables Guide
 
-The relational SQLite database manages the following tables:
+The relational SQLite database manages the following 26 tables:
 
 | Table Name | Primary Key | Foreign Keys | Key Columns | Purpose |
 | :--- | :--- | :--- | :--- | :--- |
@@ -192,6 +274,7 @@ The relational SQLite database manages the following tables:
 | **`quiz_questions`** | `id` | `quiz_id` | `question`, `option_a`, `option_b`, `correct_answer` | MC Quiz questions |
 | **`quiz_answers`** | `id` | `student_id`, `quiz_id` | `question_id`, `answer`, `is_correct` | Answer choices selected by students |
 | **`quiz_submissions`** | `id` | `student_id`, `quiz_id` | `score`, `correct_answers`, `total_questions` | Structured quiz grades and scores |
+| **`attendance_records`** | `id` | `student_id`, `classroom_id` | `scanned_uid`, `created_at` | NFC-triggered attendance logs |
 | **`activities`** | `id` | `user_id` | `activity_type`, `entity_type`, `description` | Activity log events |
 | **`student_sentiments`** | `id` | `student_id` | `sentiment_label`, `confidence_score`, `created_at` | Sentiment log history |
 | **`teacher_notes`** | `id` | `student_id` | `teacher_id`, `content`, `created_at` | Teacher comments on students |

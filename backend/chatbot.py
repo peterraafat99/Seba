@@ -24,11 +24,12 @@ def get_kb():
     global _kb
     if _kb is None:
         try:
-            print("⏳ Loading Knowledge Base... (Lazy Load)")
+            print("[KB] Loading Knowledge Base... (Lazy Load)")
             _kb = KnowledgeBase()
-            print("✅ Knowledge Base Ready.")
+            print("[KB] Knowledge Base Ready.")
         except Exception as e:
-            print(f"⚠️ Warning: Could not load Knowledge Base: {e}")
+            safe_err = str(e).encode('ascii', errors='replace').decode('ascii')
+            print(f"[KB] Warning: Could not load Knowledge Base: {safe_err}")
             return None
     return _kb
 
@@ -62,7 +63,7 @@ def unload_local_models():
     except ImportError:
         pass
         
-    print("🧹 Unloaded local embedding and NLP models from RAM to free resources.")
+    print("[CLEAN] Unloaded local embedding and NLP models from RAM to free resources.")
 
 # LLM client is loaded lazily on first use via get_llm_client()
 # Configure LLM_BACKEND in .env: 'ollama' (local) or 'gemini' (cloud)
@@ -251,12 +252,14 @@ async def save_memory_background(user_id: int, user_message: str, translated_tex
                             pass
                     current_profile.update(profile_updates)
                     student.persona_profile = json.dumps(current_profile)
-                    print(f"[DB] Persona Profile Updated: {profile_updates}")
+                    safe_profile = str(profile_updates).encode('ascii', errors='replace').decode('ascii')
+                    print(f"[DB] Persona Profile Updated: {safe_profile}")
 
             # --- B. Save Situational Note ---
             situational_note = insight.get("situational_note")
             if situational_note and isinstance(situational_note, str) and len(situational_note) > 2:
-                print(f"[DB] Background Note Saved: {situational_note}")
+                safe_note = str(situational_note).encode('ascii', errors='replace').decode('ascii')
+                print(f"[DB] Background Note Saved: {safe_note}")
                 
                 from vector_store import get_embedding_model, EMBEDDING_BACKEND, get_gemini_embeddings
                 
@@ -380,7 +383,8 @@ async def get_ai_response(user_message: str, lesson_id: int, user_id: int, db: S
     try:
         sentiment_result = await analyze_sentiment(user_message, model_backend=effective_backend)
     except Exception as e:
-        print(f"⚠️ Sentiment Pipeline Warning: {e}")
+        safe_err = str(e).encode('ascii', errors='replace').decode('ascii')
+        print(f"Sentiment Pipeline Warning: {safe_err}")
         sentiment_result = {"top_emotion": "neutral", "translated_text": user_message}
         
     emotion = sentiment_result.get("top_emotion", "neutral")
@@ -394,7 +398,8 @@ async def get_ai_response(user_message: str, lesson_id: int, user_id: int, db: S
             # Run in executor to prevent blocking the async loop
             rag_docs = await asyncio.to_thread(kb_instance.search, user_message, current_course_id, 3)
         except Exception as e:
-            print(f"[CHAT] RAG Pipeline Warning: {e}")
+            safe_err = str(e).encode('ascii', errors='replace').decode('ascii')
+            print(f"[CHAT] RAG Pipeline Warning: {safe_err}")
             rag_docs = []
     else:
         rag_docs = []

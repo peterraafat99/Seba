@@ -138,7 +138,8 @@ async def analyze_sentiment(message: str, model_backend: str = None):
         }
 
     except Exception as e:
-        print(f"[NLP] Error: {e}")
+        safe_err = str(e).encode('ascii', errors='replace').decode('ascii')
+        print(f"[NLP] Error: {safe_err}")
         return {
             "top_emotion": "neutral",
             "top_3_emotions": [],
@@ -181,6 +182,7 @@ async def extract_learning_insight(original_message: str, translated_message: st
 
         return {
             "note": note_content,
+            "situational_note": note_content,
             "weight": 1.5
         }
 
