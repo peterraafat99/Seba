@@ -259,7 +259,7 @@ async def save_memory_background(user_id: int, user_message: str, translated_tex
             situational_note = insight.get("situational_note")
             if situational_note and isinstance(situational_note, str) and len(situational_note) > 2:
                 safe_note = str(situational_note).encode('ascii', errors='replace').decode('ascii')
-                print(f"[DB] Background Note Saved: {safe_note}")
+                print(f"[DB] Attempting to save note: {safe_note}")
                 
                 from vector_store import get_embedding_model, EMBEDDING_BACKEND, get_gemini_embeddings
                 
@@ -297,14 +297,20 @@ async def save_memory_background(user_id: int, user_message: str, translated_tex
                     db.add(TeacherNote(
                         student_id=user_id,
                         note_content=situational_note,
-                        category="SITUATIONAL",
+                        category=insight.get("category", "SITUATIONAL"),
                         weight=insight.get("weight", 1.0),
+                        topic_tags=insight.get("topic_tags", "") or None,
                         embedding=embedding_json
                     ))
+                    print(f"[DB] TeacherNote added to session. Committing...")
             db.commit()
+            print(f"[DB] DB commit successful for insight block.")
+        else:
+            print(f"[DB] Insight extraction returned None — no note generated for this message.")
     except Exception as e:
         db.rollback()
-        print(f"[DB] Background Memory Insight Error: {e}")
+        safe_err = str(e).encode('ascii', errors='replace').decode('ascii')
+        print(f"[DB] Background Memory Insight Error: {safe_err}")
     finally:
         db.close()
 

@@ -149,43 +149,126 @@ async def analyze_sentiment(message: str, model_backend: str = None):
 
 async def extract_learning_insight(original_message: str, translated_message: str, model_backend: str = None) -> dict:
     """
-    Uses the LLM (based on model_backend) to extract pedagogical insights for the teacher dashboard.
+    Uses the LLM to write a flexible, natural teacher observation about the student.
+    Returns a structured dict with: note, category, weight, topic_tags.
+
+    Categories (matching TeacherNote model):
+      WEAKNESS      — struggles, misconceptions, gaps (weight 2.0)
+      STRENGTH      — capabilities, breakthroughs, confidence (weight 1.8)
+      CORE_PERSONA  — learning style, personality about learning (weight 2.0)
+      TOPIC_SPECIFIC — questions or interest in a specific topic (weight 1.5)
+      SITUATIONAL   — emotional state, context, or one-off observation (weight 1.0)
     """
     llm = get_llm_client(force_backend=model_backend)
 
     prompt = f"""
-    You are an expert educational psychologist.
-    
-    **TASK:**
-    Analyze this student message for specific learning indicators.
-    Original: "{original_message}"
-    Translated: "{translated_message}"
-    
-    **CRITERIA:**
-    1. Does the student reveal a specific **misconception**?
-    2. Is there a **gap in prerequisite knowledge**?
-    3. Is there a clear **strength** or **interest**?
-    
-    **OUTPUT:**
-    - If YES: Return a concise note (max 6 words). Example: "Struggles with loops", "Confused by recursion".
-    - If NO (e.g., just greetings or generic frustration): Return "None".
-    
-    Return ONLY the note or "None". No explanation.
-    """
+You are an experienced math teacher writing a brief observation note about a student in your private notebook.
+
+A student just sent this message in your online tutoring chat:
+  Original: "{original_message}"
+  Translated (if Arabic): "{translated_message}"
+
+Your job is to write a SHORT, NATURAL, INSIGHTFUL teacher observation about what this message reveals.
+Think like a real teacher — what would you jot down after seeing this message?
+
+Rules:
+- Write the note as a natural observation sentence (NOT a command, NOT a label). Max 12 words.
+  Good examples:
+    "Confused about why negative times negative gives positive"
+    "Asks lots of questions about fractions — shows genuine curiosity"
+    "Seems to memorize steps but doesn't understand the underlying concept"
+    "Gets frustrated quickly when problems take more than one step"
+    "Strong intuition for geometry; struggles to write formal proofs"
+    "Prefers visual explanations, dislikes pure algebraic derivations"
+- Also classify the note into ONE category:
+    WEAKNESS      → a gap, struggle, misconception, or persistent error
+    STRENGTH      → a capability, breakthrough, or area of confidence  
+    CORE_PERSONA  → a stable learning style or personality trait about learning
+    TOPIC_SPECIFIC → an interest or question about a specific math topic
+    SITUATIONAL   → an emotional state or one-time contextual observation
+- Extract topic tags (comma-separated math topics mentioned, e.g. "Fractions, Algebra")
+- Assign a severity weight (float):
+    WEAKNESS:      2.0 if clearly significant, 1.5 if minor
+    STRENGTH:      1.8 if a clear ability, 1.2 if minor
+    CORE_PERSONA:  2.0 (always important for long-term adaptation)
+    TOPIC_SPECIFIC: 1.5
+    SITUATIONAL:   1.0
+
+If the message is ONLY a greeting, thanks, or has ZERO academic content, return exactly:
+SKIP
+
+Otherwise return ONLY valid JSON in this exact format (no markdown, no explanation):
+{{
+  "note": "<your teacher observation>",
+  "category": "<WEAKNESS|STRENGTH|CORE_PERSONA|TOPIC_SPECIFIC|SITUATIONAL>",
+  "weight": <float>,
+  "topic_tags": "<comma-separated tags or empty string>"
+}}
+"""
 
     try:
-        note_content = await llm.generate(prompt)
-        note_content = note_content.strip().split("\n")[0].strip()
+        raw = await llm.generate(prompt)
+        raw = raw.strip()
 
-        if "None" in note_content or len(note_content) < 3:
+        # Strip markdown fences if the model wraps output
+        import re as _re
+        raw = _re.sub(r'^```(?:json)?\s*', '', raw, flags=_re.IGNORECASE)
+        raw = _re.sub(r'\s*```$', '', raw)
+        raw = raw.strip()
+
+        # Check SKIP signal
+        if raw.upper().startswith("SKIP") or raw.lower() == "none":
+            print("[NLP] Insight: message has no academic content, skipping note.")
             return None
 
+        # Try to parse JSON
+        import json as _json
+        try:
+            data = _json.loads(raw)
+        except Exception:
+            # Fallback: try to extract just the JSON object if model added preamble
+            match = _re.search(r'\{.*\}', raw, _re.DOTALL)
+            if match:
+                data = _json.loads(match.group())
+            else:
+                # Last resort: treat the whole response as a plain note in SITUATIONAL
+                note_text = raw.split("\n")[0].strip().strip('"').strip("'")
+                if len(note_text) < 3:
+                    return None
+                data = {
+                    "note": note_text,
+                    "category": "SITUATIONAL",
+                    "weight": 1.0,
+                    "topic_tags": ""
+                }
+
+        note_text = str(data.get("note", "")).strip().strip('"').strip("'")
+        if not note_text or len(note_text) < 3:
+            return None
+
+        category = str(data.get("category", "SITUATIONAL")).upper()
+        if category not in ("WEAKNESS", "STRENGTH", "CORE_PERSONA", "TOPIC_SPECIFIC", "SITUATIONAL"):
+            category = "SITUATIONAL"
+
+        try:
+            weight = float(data.get("weight", 1.0))
+        except (TypeError, ValueError):
+            weight = 1.0
+
+        topic_tags = str(data.get("topic_tags", "")).strip()
+
+        safe_note = note_text.encode('ascii', errors='replace').decode('ascii')
+        print(f"[NLP] Insight extracted — [{category}] w={weight}: {safe_note}")
+
         return {
-            "note": note_content,
-            "situational_note": note_content,
-            "weight": 1.5
+            "note": note_text,
+            "situational_note": note_text,   # kept for backward compat with chatbot.py
+            "category": category,
+            "weight": weight,
+            "topic_tags": topic_tags,
         }
 
     except Exception as e:
-        print(f"Error extracting insight: {e}")
+        safe_err = str(e).encode('ascii', errors='replace').decode('ascii')
+        print(f"[NLP] Error extracting insight: {safe_err}")
         return None
