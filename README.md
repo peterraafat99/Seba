@@ -148,10 +148,11 @@ The online learning portal features a bilingual AI tutoring companion.
 
 ### 1. Bilingual Sentiment Analysis Flow
 To adapt to Egyptian students, Seba implements a hybrid sentiment pipeline:
-1. **Egyptian Arabic Sentiment:** Uses a local lookup lexicon (`EgySenti` regex matches) to detect local dialects (e.g. *مش فاهم*, *متضايق*, *حزين*).
-2. **Translation Pipeline:** If the text contains Arabic, it is translated to English using a translation API or local PyTorch translators.
-3. **Deep Emotion Classification:** The English text is sent to a HuggingFace `RoBERTa-base-go_emotions` pipeline. It parses the text into 28 discrete emotions (e.g. `confusion`, `sadness`, `excitement`, `curiosity`).
-4. **Sentiment Logs:** Labels are saved to the `student_sentiments` table alongside the Cairo local timestamp.
+1. **Arabic Dialect Gatekeeper:** Automatically checks if the student's message contains Arabic characters using a regex pattern.
+2. **Translation Pipeline:** If Arabic is detected, a specialized translation prompt is sent to the active LLM (Ollama/Gemini) to translate the Egyptian Arabic dialect (e.g. *مش فاهم*, *متضايق*, *حزين*) to English while preserving technical terms. If the primary LLM fails, it automatically runs a fallback gatekeeper to try the alternative backend.
+3. **Deep Emotion Classification:** The translated English text is processed using a local, CPU-based HuggingFace `RoBERTa-base-go_emotions` pipeline. It classifies the text into 28 discrete emotions (e.g. `confusion`, `sadness`, `excitement`, `curiosity`).
+4. **Sentiment Logs:** The detected emotion, confidence score, original message, and translated text are saved to the `student_sentiments` table alongside local Cairo timestamps.
+
 
 ### 2. Hybrid Retrieval-Augmented Generation (RAG) System
 Seba retrieves math explanations from localized Egyptian curriculum documents using a hybrid search and re-ranking architecture:
