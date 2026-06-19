@@ -37,6 +37,10 @@ async def main():
             safe_response = str(response).encode('ascii', errors='replace').decode('ascii')
             print(safe_response)
         print("========================================================\n")
+        print("Waiting for background memory tasks to finish...")
+        pending = asyncio.all_tasks() - {asyncio.current_task()}
+        if pending:
+            await asyncio.gather(*pending, return_exceptions=True)
         
     except Exception as e:
         safe_err = str(e).encode('ascii', errors='replace').decode('ascii')
