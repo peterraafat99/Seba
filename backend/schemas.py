@@ -254,6 +254,7 @@ class ClassroomResponse(BaseModel):
     capacity: Optional[int] = None
     camera_source: Optional[str] = None
     is_exam_room: bool
+    exam_config_json: Optional[str] = None
     class Config:
         from_attributes = True
 

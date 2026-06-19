@@ -391,13 +391,13 @@ class ApiClient {
 
   // --- Quiz ---
 
-  async submitQuiz(lessonId: string, answers: Record<string, string | number>, calculatedScore?: number) {
+  async submitQuiz(lessonId: string, answers: Record<string, string | number>, calculatedScore?: number, quizId?: number) {
 
     // 1. LOOK IN YOUR LOCAL JSON FIRST
     // This grabs the file: src/data/lessons/Math/lesson-1.json
     const localData = lessonsData[lessonId];
 
-    if (localData && localData.quiz) {
+    if (localData && localData.quiz && !quizId) {
       console.log(`[API] ⚡ Grading Quiz Locally using JSON for Lesson ${lessonId}`);
 
       let correct = 0;
@@ -417,7 +417,8 @@ class ApiClient {
       await this.client.post('/quiz/submit', {
         lessonId: parseInt(lessonId),
         answers,
-        calculatedScore: calculatedScore || score
+        calculatedScore: calculatedScore || score,
+        quizId
       });
 
       // Return the result to frontend
@@ -431,12 +432,12 @@ class ApiClient {
       };
     }
 
-    // 2. Fallback: If no local data found, call the backend
-    // (This is what was causing the 404 error, but we skip it now)
+    // 2. Fallback: If no local data found or specific quizId is provided, call the backend
     return this.client.post('/quiz/submit', {
       lessonId: parseInt(lessonId),
       answers,
-      calculatedScore
+      calculatedScore,
+      quizId
     });
   }
 
@@ -1198,6 +1199,33 @@ class ApiClient {
       ]};
     }
     return this.client.get(`/analytics/course/${courseId}/focus-history`);
+  }
+
+  async getTodayClassroomAttendance(classroomId: string | number) {
+    if (this.isMockMode) {
+      await sleep();
+      return { data: [
+        { student_id: 304, name: "Peter Raafat", is_present: true, scan_time: new Date().toISOString(), attendance_rate: 95 },
+        { student_id: 305, name: "Nehal Kamal", is_present: true, scan_time: new Date().toISOString(), attendance_rate: 98 },
+        { student_id: 306, name: "Zeyada", is_present: false, scan_time: null, attendance_rate: 90 },
+      ]};
+    }
+    return this.client.get(`/attendance/classroom/${classroomId}/today`);
+  }
+
+  async getStudentAttendanceHistory(studentId: string | number) {
+    if (this.isMockMode) {
+      await sleep();
+      return { data: {
+        stats: [
+          { classroom_id: 2, classroom_name: "١٠-ب قاعة الرياضيات", room_number: "B204", present_days: 12, total_days: 13, attendance_rate: 92 }
+        ],
+        logs: [
+          { id: 1, classroom_id: 2, classroom_name: "١٠-ب قاعة الرياضيات", timestamp: new Date().toISOString(), status: "present" }
+        ]
+      }};
+    }
+    return this.client.get(`/attendance/student/${studentId}/history`);
   }
 }
 

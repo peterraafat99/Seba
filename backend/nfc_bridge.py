@@ -70,8 +70,13 @@ def run_attendance_mode(ser, classroom_id):
         try:
             if ser.in_waiting > 0:
                 line = ser.readline().decode('utf-8', errors='ignore').strip()
+                tag_id = None
                 if line.startswith("NFC_TAG:"):
-                    tag_id = line.split(":", 1)[1].strip().upper()
+                    tag_id = line.split(":", 1)[1].strip().replace(" ", "").upper()
+                elif "your ID is:" in line:
+                    tag_id = line.split("your ID is:", 1)[1].strip().replace(" ", "").upper()
+                
+                if tag_id:
                     print(f"\n{Colors.OKBLUE}[SCAN]{Colors.ENDC} Card detected! UID: {Colors.BOLD}{tag_id}{Colors.ENDC}")
                     
                     # Send to backend
@@ -112,8 +117,13 @@ def run_enroll_mode(ser):
         try:
             if ser.in_waiting > 0:
                 line = ser.readline().decode('utf-8', errors='ignore').strip()
+                tag_id = None
                 if line.startswith("NFC_TAG:"):
-                    tag_id = line.split(":", 1)[1].strip().upper()
+                    tag_id = line.split(":", 1)[1].strip().replace(" ", "").upper()
+                elif "your ID is:" in line:
+                    tag_id = line.split("your ID is:", 1)[1].strip().replace(" ", "").upper()
+                
+                if tag_id:
                     print(f"\n{Colors.OKBLUE}[SCAN]{Colors.ENDC} Card detected! UID: {Colors.BOLD}{tag_id}{Colors.ENDC}")
                     
                     # Send to backend
@@ -141,7 +151,7 @@ def main():
     print(f"╚══════════════════════════════════════════════════╝{Colors.ENDC}")
     
     com_port = select_com_port()
-    baud_rate = 115200
+    baud_rate = 921600
     
     print(f"\n{Colors.OKBLUE}Connecting to {com_port} at {baud_rate} baud...{Colors.ENDC}")
     try:

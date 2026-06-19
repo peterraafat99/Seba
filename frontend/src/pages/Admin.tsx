@@ -1985,11 +1985,12 @@ export const Admin = () => {
                               <details key={label} className="group bg-gray-50 dark:bg-gray-800/50 rounded-lg border border-gray-200 dark:border-gray-700 overflow-hidden">
                                 <summary className="flex items-center justify-between p-4 cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors select-none">
                                   <div className="flex items-center gap-3">
-                                    <span className={`w-3 h-3 rounded-full ${label.toLowerCase().includes('frustrat') || label.toLowerCase().includes('struggle') ? 'bg-red-500' :
-                                      label.toLowerCase().includes('confus') ? 'bg-yellow-500' :
-                                        label.toLowerCase().includes('joy') || label.toLowerCase().includes('excit') ? 'bg-green-500' :
-                                          'bg-blue-500'
-                                      }`}></span>
+                                    <span className={`w-3 h-3 rounded-full ${
+                                      ["anger", "annoyance", "disappointment", "disapproval", "disgust", "embarrassment", "fear", "grief", "nervousness", "remorse", "sadness", "negative", "frustrat", "struggle"].some(e => label.toLowerCase().includes(e)) ? 'bg-red-500' :
+                                      ["confusion", "confus", "surprise"].some(e => label.toLowerCase().includes(e)) ? 'bg-yellow-500' :
+                                      ["admiration", "amusement", "approval", "caring", "desire", "excitement", "excit", "gratitude", "joy", "love", "optimism", "pride", "relief", "positive"].some(e => label.toLowerCase().includes(e)) ? 'bg-green-500' :
+                                      'bg-blue-500'
+                                    }`}></span>
                                     <span className="font-semibold text-gray-900 dark:text-white capitalize">
                                       {label}
                                     </span>

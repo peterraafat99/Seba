@@ -15,6 +15,23 @@ export function ClassroomLive() {
   const [status, setStatus] = useState<'connecting' | 'connected' | 'error' | 'disconnected'>('connecting');
   
   const wsRef = useRef<WebSocket | null>(null);
+  const [attendance, setAttendance] = useState<any[]>([]);
+
+  const fetchAttendance = async () => {
+    if (!id) return;
+    try {
+      const res = await api.getTodayClassroomAttendance(id);
+      setAttendance(res.data || []);
+    } catch (e) {
+      console.error("Failed to load today's attendance:", e);
+    }
+  };
+
+  useEffect(() => {
+    fetchAttendance();
+    const interval = setInterval(fetchAttendance, 4000); // Poll attendance every 4 seconds
+    return () => clearInterval(interval);
+  }, [id]);
 
   useEffect(() => {
     // Connect to WebSocket
@@ -180,6 +197,78 @@ export function ClassroomLive() {
               </div>
             )}
           </div>
+        </div>
+      </div>
+
+      {/* NFC Attendance Roster Table */}
+      <div className="mt-8 bg-gray-900/50 border border-gray-800 rounded-3xl p-6 backdrop-blur-md">
+        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-6">
+          <div>
+            <h2 className="text-xl font-bold text-gray-200 flex items-center gap-2.5">
+              <Users className="w-5 h-5 text-indigo-400" />
+              NFC Attendance Roster (Today)
+            </h2>
+            <p className="text-xs text-gray-500 mt-1">Logs captured from the physical ESP32 + RC522 RFID reader.</p>
+          </div>
+          <span className="text-sm font-semibold text-gray-300 bg-gray-800 border border-gray-700 px-4 py-2 rounded-full">
+            Present today: <strong className="text-green-400">{attendance.filter(a => a.is_present).length}</strong> / {attendance.length}
+          </span>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full text-left border-collapse">
+            <thead>
+              <tr className="border-b border-gray-800 text-xs font-semibold text-gray-400 uppercase tracking-wider">
+                <th className="pb-3.5 px-4">Student ID</th>
+                <th className="pb-3.5 px-4">Student Name</th>
+                <th className="pb-3.5 px-4">Status</th>
+                <th className="pb-3.5 px-4">Time Checked-in</th>
+                <th className="pb-3.5 px-4">Overall Attendance Rate</th>
+              </tr>
+            </thead>
+            <tbody>
+              {attendance.map((student) => (
+                <tr key={student.student_id} className="border-b border-gray-800/40 text-sm text-gray-300 hover:bg-gray-800/10 transition-colors">
+                  <td className="py-4 px-4 font-mono font-bold text-indigo-400">{student.student_id}</td>
+                  <td className="py-4 px-4 font-semibold">{student.name}</td>
+                  <td className="py-4 px-4">
+                    <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold ${
+                      student.is_present 
+                        ? 'bg-green-500/10 text-green-400 border border-green-500/25' 
+                        : 'bg-red-500/10 text-red-400 border border-red-500/25 animate-pulse'
+                    }`}>
+                      <span className={`w-1.5 h-1.5 rounded-full ${student.is_present ? 'bg-green-500' : 'bg-red-500'}`} />
+                      {student.is_present ? 'Present' : 'Absent'}
+                    </span>
+                  </td>
+                  <td className="py-4 px-4 text-gray-400">
+                    {student.is_present && student.scan_time ? (
+                      new Date(student.scan_time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+                    ) : (
+                      <span className="italic text-gray-500">-</span>
+                    )}
+                  </td>
+                  <td className="py-4 px-4">
+                    <div className="flex items-center gap-3">
+                      <div className="flex-1 max-w-[150px] bg-gray-800 rounded-full h-2">
+                        <div 
+                          className="bg-indigo-500 h-2 rounded-full transition-all duration-500" 
+                          style={{ width: `${student.attendance_rate}%` }}
+                        />
+                      </div>
+                      <span className="font-semibold">{student.attendance_rate}%</span>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+              {attendance.length === 0 && (
+                <tr>
+                  <td colSpan={5} className="py-8 text-center text-sm text-gray-400 italic">
+                    No students enrolled in this classroom roster.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
         </div>
       </div>
     </div>

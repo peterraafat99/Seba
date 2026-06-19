@@ -101,7 +101,7 @@ export const Dashboard = () => {
 
   // Student view states
   const [activeTabStudent, setActiveTabStudent] = useState<'learning' | 'classroom'>('learning');
-  const [classroomSubTabStudent, setClassroomSubTabStudent] = useState<'materials' | 'messaging' | 'focus'>('materials');
+  const [classroomSubTabStudent, setClassroomSubTabStudent] = useState<'materials' | 'messaging' | 'focus' | 'attendance'>('materials');
   const [studentClassroomId, setStudentClassroomId] = useState<number | null>(null);
   const [studentClassroomName, setStudentClassroomName] = useState<string>('');
   
@@ -117,6 +117,8 @@ export const Dashboard = () => {
   // Focus analytics
   const [focusHistoryData, setFocusHistoryData] = useState<any[]>([]);
   const [isLoadingFocusHistory, setIsLoadingFocusHistory] = useState(false);
+  const [studentAttendanceHistory, setStudentAttendanceHistory] = useState<any>(null);
+  const [loadingAttendance, setLoadingAttendance] = useState(false);
 
   // Quiz taking state
   const [activeQuiz, setActiveQuiz] = useState<any | null>(null);
@@ -146,6 +148,12 @@ export const Dashboard = () => {
   useEffect(() => {
     if (currentUser && currentUser.role === 'student' && classroomSubTabStudent === 'focus') {
       loadStudentFocusHistory(currentUser.id);
+    }
+  }, [currentUser, classroomSubTabStudent]);
+
+  useEffect(() => {
+    if (currentUser && currentUser.role === 'student' && classroomSubTabStudent === 'attendance') {
+      loadStudentAttendanceHistory(currentUser.id);
     }
   }, [currentUser, classroomSubTabStudent]);
 
@@ -243,6 +251,18 @@ export const Dashboard = () => {
       console.error("Failed to load student focus history", err);
     } finally {
       setIsLoadingFocusHistory(false);
+    }
+  };
+
+  const loadStudentAttendanceHistory = async (studentId: number) => {
+    try {
+      setLoadingAttendance(true);
+      const res = await api.getStudentAttendanceHistory(studentId);
+      setStudentAttendanceHistory(res.data);
+    } catch (err) {
+      console.error("Failed to load student attendance history:", err);
+    } finally {
+      setLoadingAttendance(false);
     }
   };
 
@@ -690,7 +710,8 @@ export const Dashboard = () => {
               {[
                 { id: 'materials', label: 'Coursework & materials', icon: BookOpen },
                 { id: 'messaging', label: 'Teacher Inbox & Chat', icon: MessageSquare },
-                { id: 'focus', label: 'My Focus Analytics', icon: TrendingUp }
+                { id: 'focus', label: 'My Focus Analytics', icon: TrendingUp },
+                { id: 'attendance', label: 'My Attendance Logs', icon: CheckCircle }
               ].map(subTab => {
                 const Icon = subTab.icon;
                 return (
@@ -1058,6 +1079,74 @@ export const Dashboard = () => {
                                   'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400'
                                 }`}>
                                   {session.focus_rate}%
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* ATTENDANCE SUBTAB */}
+                {classroomSubTabStudent === 'attendance' && (
+                  <div className="space-y-6">
+                    <h3 className="text-xl font-bold text-gray-900 dark:text-white border-b border-gray-200 dark:border-gray-700 pb-3 flex items-center gap-2">
+                      <CheckCircle className="w-5 h-5 text-indigo-500" /> My Attendance Logs
+                    </h3>
+                    <p className="text-sm text-gray-650 dark:text-gray-400">
+                      View your physical classroom attendance logs and overall attendance rate for each enrolled classroom.
+                    </p>
+
+                    {loadingAttendance ? (
+                      <Loading text="Loading attendance history..." />
+                    ) : !studentAttendanceHistory || !studentAttendanceHistory.stats || studentAttendanceHistory.stats.length === 0 ? (
+                      <p className="text-sm text-gray-500 italic text-center py-16">No attendance records found yet.</p>
+                    ) : (
+                      <div className="space-y-6">
+                        {/* Stats Cards */}
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                          {studentAttendanceHistory.stats.map((stat: any, idx: number) => (
+                            <Card key={idx} className="bg-gray-55/30 dark:bg-gray-900/10 border border-gray-150 dark:border-gray-800 p-4">
+                              <div className="flex justify-between items-center">
+                                <div>
+                                  <p className="text-xs text-gray-550 font-bold uppercase tracking-wider">{stat.classroom_name}</p>
+                                  <p className="text-xs text-gray-450 dark:text-gray-400 mt-0.5">Room: {stat.room_number || 'N/A'}</p>
+                                </div>
+                                <span className={`text-2xl font-bold ${
+                                  stat.attendance_rate >= 90 ? 'text-green-500' :
+                                  stat.attendance_rate >= 75 ? 'text-yellow-500' :
+                                  'text-red-500'
+                                }`}>
+                                  {stat.attendance_rate}%
+                                </span>
+                              </div>
+                              <div className="mt-3 flex items-center gap-3">
+                                <div className="flex-1 bg-gray-250 dark:bg-gray-750 rounded-full h-1.5">
+                                  <div 
+                                    className="bg-indigo-50 h-1.5 rounded-full transition-all duration-500" 
+                                    style={{ width: `${stat.attendance_rate}%` }}
+                                  />
+                                </div>
+                                <span className="text-xs text-gray-505 font-bold">{stat.present_days} / {stat.total_days} days present</span>
+                              </div>
+                            </Card>
+                          ))}
+                        </div>
+
+                        {/* Logs list */}
+                        <div className="space-y-3">
+                          <h4 className="text-sm font-bold text-gray-850 dark:text-gray-200">Chronological Check-in Logs</h4>
+                          <div className="max-h-60 overflow-y-auto space-y-2.5 divide-y divide-gray-100 dark:divide-gray-850">
+                            {studentAttendanceHistory.logs.map((log: any) => (
+                              <div key={log.id} className="pt-2 flex items-center justify-between text-xs">
+                                <div>
+                                  <p className="font-bold text-gray-800 dark:text-gray-200">{log.classroom_name}</p>
+                                  <p className="text-gray-500 font-semibold mt-0.5">{new Date(log.timestamp).toLocaleString()}</p>
+                                </div>
+                                <span className="px-2.5 py-1 rounded-full font-bold text-xs bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400 uppercase tracking-wide">
+                                  {log.status}
                                 </span>
                               </div>
                             ))}

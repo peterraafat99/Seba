@@ -276,26 +276,26 @@ def seed_database():
     # 9. Seed Student Sentiments (for chatbot analytics charts)
     print("Seeding student sentiments...")
     sentiment_phrases = [
-        ("أحتاج للمساعدة في فهم هذا المفهوم الصعب", "negative", 0.82),
-        ("هل يمكنك شرح طريقة عمل الحلقات التكرارية مجدداً؟", "neutral", 0.90),
-        ("فهمت الدرس ممتاز جداً شكراً لك", "positive", 0.95),
-        ("الدرس رائع والتمارين مفيدة للغاية", "positive", 0.98),
-        ("أواجه مشكلة في تشغيل الكود البرمجي الخاص بي", "negative", 0.76),
-        ("كيف يمكنني كتابة دالة ترجع قيمة في بايثون؟", "neutral", 0.85),
-        ("أشعر بالضياع ولا أعرف من أين أبدأ", "negative", 0.88),
-        ("لقد تمكنت من حل التحدي وحصلت على الدرجة الكاملة!", "positive", 0.97),
-        ("ما هي الفروقات بين CSS Grid و Flexbox؟", "neutral", 0.80),
-        ("أنا مستمتع جداً بهذه الدورة التعليمية", "positive", 0.96)
+        ("أحتاج للمساعدة في فهم هذا المفهوم الصعب", "I need help understanding this difficult concept", "confusion", 0.82),
+        ("هل يمكنك شرح طريقة عمل الحلقات التكرارية مجدداً؟", "Can you explain how loops work again?", "curiosity", 0.90),
+        ("فهمت الدرس ممتاز جداً شكراً لك", "I understood the lesson perfectly, thank you", "gratitude", 0.95),
+        ("الدرس رائع والتمارين مفيدة للغاية", "The lesson is great and the exercises are very useful", "approval", 0.98),
+        ("أواجه مشكلة في تشغيل الكود البرمجي الخاص بي", "I am facing a problem running my code", "annoyance", 0.76),
+        ("كيف يمكنني كتابة دالة ترجع قيمة في بايثون؟", "How can I write a function that returns a value in Python?", "curiosity", 0.85),
+        ("أشعر بالضياع ولا أعرف من أين أبدأ", "I feel lost and do not know where to start", "sadness", 0.88),
+        ("لقد تمكنت من حل التحدي وحصلت على الدرجة الكاملة!", "I managed to solve the challenge and got full marks!", "joy", 0.97),
+        ("ما هي الفروقات بين CSS Grid و Flexbox؟", "What are the differences between CSS Grid and Flexbox?", "curiosity", 0.80),
+        ("أنا مستمتع جداً بهذه الدورة التعليمية", "I am really enjoying this tutorial course", "joy", 0.96)
     ]
     
     for classroom_id, student_id in class_students:
         # Generate 5 sentiments per student
         for k in range(5):
-            phrase, label, conf = random.choice(sentiment_phrases)
+            phrase, translation, label, conf = random.choice(sentiment_phrases)
             timestamp = datetime.now() - timedelta(days=random.randint(0, 10))
             cur.execute(
                 "INSERT INTO student_sentiments (student_id, original_message, translated_message, sentiment_label, confidence_score, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-                (student_id, phrase, phrase, label, conf, timestamp.strftime("%Y-%m-%d %H:%M:%S"))
+                (student_id, phrase, translation, label, conf, timestamp.strftime("%Y-%m-%d %H:%M:%S"))
             )
             
     # 10. Seed Teacher Notes (for details modal)

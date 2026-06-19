@@ -11,7 +11,7 @@ import shutil
 from typing import Dict, List, Optional, Any
 from pydantic import BaseModel, Field
 from database import SessionLocal, engine, Base
-from models import User, Course, Lesson, Enrollment, Quiz, QuizQuestion, QuizAnswer, Activity, TeacherNote, StudentSentiment, LessonProgress, Classwork, ClassworkSubmission
+from models import User, Course, Lesson, Enrollment, Quiz, QuizQuestion, QuizAnswer, Activity, TeacherNote, StudentSentiment, LessonProgress, Classwork, ClassworkSubmission, QuizSubmission
 from schemas import (
     UserCreate, UserResponse, Token, CourseCreate, CourseResponse,
     LessonCreate, LessonResponse, DashboardResponse, QuizResponse,
@@ -21,7 +21,8 @@ from schemas import (
 from auth import get_current_user, create_access_token, verify_password, get_password_hash
 from admin import admin_router
 from chatbot import get_ai_response, start_active_learning, process_active_learning 
-from quiz_engine import generate_personalized_quiz
+from quiz_engine import generate_personalized_quiz, is_quiz_request
+from nlp_engine import analyze_sentiment
 # ---- New School Platform Routers ----
 from routers.school_router import router as school_router
 from routers.cv_router import router as cv_router
@@ -140,6 +141,7 @@ class QuizSubmitRequest(BaseModel):
     lesson_id: int = Field(alias="lessonId")
     answers: Dict[str, int]
     calculated_score: Optional[int] = Field(default=None, alias="calculatedScore")  # Frontend sends actual score
+    quiz_id: Optional[int] = Field(default=None, alias="quizId")
 
 class QuizRequest(BaseModel):
     lessonId: int
@@ -341,12 +343,14 @@ async def get_dashboard(current_user: User = Depends(get_current_user), db: Sess
             enrolls = db.query(Enrollment).filter(Enrollment.student_id == student.id).all()
             courses_count = len(enrolls)
             
-            # Avg Grade (Mock/Calc)
-            # Simplified for summary
-            avg_grade = 0
-            if courses_count > 0:
-                # In real app, calculate true avg from quizzes
-                avg_grade = random.randint(60, 100) 
+            # Avg Grade (Actual score)
+            # Calculate from quiz_submissions if they exist, otherwise fallback
+            avg_score = db.query(func.avg(QuizSubmission.score)).filter(QuizSubmission.student_id == student.id).scalar()
+            if avg_score is not None:
+                avg_grade = int(avg_score)
+            else:
+                random.seed(student.id)
+                avg_grade = random.randint(70, 95) 
             
             students_summary.append({
                 "id": student.id,
@@ -617,8 +621,27 @@ async def chat(message: ChatMessage, current_user: User = Depends(get_current_us
         print(f"[CHAT] Message = '{message.message[:60]}'")
         print(f"{'='*50}\n")
 
-        trigger_keywords = ["quiz me", "generate quiz", "make a quiz", "test me"]
-        if any(kw in message.message.lower() for kw in trigger_keywords):
+        if is_quiz_request(message.message):
+            try:
+                sentiment_result = await analyze_sentiment(message.message, model_backend=message.model_backend)
+                emotion = sentiment_result.get("top_emotion", "neutral")
+                translated_text = sentiment_result.get("translated_text", message.message)
+                
+                # ASCII-safe print to avoid Windows console errors
+                safe_msg = message.message.encode('ascii', errors='replace').decode('ascii')
+                print(f"[CHAT] Quiz request detected: '{safe_msg}'. Sentiment: {emotion}")
+                
+                db.add(StudentSentiment(
+                    student_id=current_user.id,
+                    original_message=message.message,
+                    translated_message=translated_text,
+                    sentiment_label=emotion,
+                    confidence_score=0.9
+                ))
+                db.commit()
+            except Exception as e:
+                print(f"[CHAT] Failed to analyze/save quiz request sentiment: {e}")
+
             quiz_data = await generate_personalized_quiz(
                 current_user.id, db, message.lessonId,
                 model_backend=message.model_backend  # FIX: pass backend
@@ -885,48 +908,87 @@ async def submit_quiz(request: QuizSubmitRequest, current_user: User = Depends(g
     if not lesson:
         raise HTTPException(status_code=404, detail="Lesson not found")
     
-    quiz = db.query(Quiz).filter(Quiz.lesson_id == lesson_id).first()
+    # 1. Try to find the specific quiz
+    quiz = None
+    if request.quiz_id is not None:
+        quiz = db.query(Quiz).filter(Quiz.id == request.quiz_id).first()
     
-    # If no standard quiz exists, this is an AI-generated quiz
-    # Use the score calculated by the frontend
+    if not quiz:
+        # Fallback to standard platform quiz for this lesson
+        quiz = db.query(Quiz).filter(Quiz.lesson_id == lesson_id, Quiz.quiz_type == "platform").first()
+        
+    if not quiz:
+        # Final fallback to any quiz for this lesson
+        quiz = db.query(Quiz).filter(Quiz.lesson_id == lesson_id).first()
+    
+    # If still no quiz exists in the DB, fall back to frontend calculation
     if not quiz:
          total = len(answers)
-         
-         # FIXED: Use the actual score calculated by frontend
          if request.calculated_score is not None:
              score = request.calculated_score
              correct = int((score / 100) * total)
          else:
-             # Fallback if frontend doesn't send score (shouldn't happen)
              correct = total
              score = 100
          
-         # Create activity record for AI-generated quiz
          activity = Activity(
              user_id=current_user.id, 
              activity_type="quiz_submitted", 
              entity_type="quiz", 
-             entity_id=0,  # AI quiz doesn't have a persistent ID
+             entity_id=0,
              description=f"Submitted AI quiz: {lesson.title} (Score: {score}%)"
          )
          db.add(activity)
          db.commit()
-         
          return {"score": score, "correct": correct, "total": total}
 
+    # Grade the quiz using database questions
     questions = db.query(QuizQuestion).filter(QuizQuestion.quiz_id == quiz.id).all()
     correct = 0
     total = len(questions)
     
+    # We drop any previous answers to this quiz by this student to keep results clean
+    db.query(QuizAnswer).filter(
+        QuizAnswer.student_id == current_user.id,
+        QuizAnswer.quiz_id == quiz.id
+    ).delete()
+    
     for question in questions:
         user_answer = answers.get(str(question.id))
-        if user_answer == question.correct_answer:
+        is_correct = (user_answer == question.correct_answer)
+        if is_correct:
             correct += 1
+            
+        # Save individual answer to quiz_answers table
+        if user_answer is not None:
+            db.add(QuizAnswer(
+                student_id=current_user.id,
+                quiz_id=quiz.id,
+                question_id=question.id,
+                answer=user_answer,
+                is_correct=is_correct
+            ))
             
     score = int((correct / total) * 100) if total > 0 else 0
     
-    # Create activity record for standard quiz
-    activity = Activity(user_id=current_user.id, activity_type="quiz_submitted", entity_type="quiz", entity_id=quiz.id, description=f"Submitted quiz: {lesson.title} (Score: {score}%)")
+    # Create quiz submission record
+    submission = QuizSubmission(
+        student_id=current_user.id,
+        quiz_id=quiz.id,
+        score=float(score),
+        correct_answers=correct,
+        total_questions=total
+    )
+    db.add(submission)
+    
+    # Create activity record
+    activity = Activity(
+        user_id=current_user.id,
+        activity_type="quiz_submitted",
+        entity_type="quiz",
+        entity_id=quiz.id,
+        description=f"Submitted quiz: {lesson.title} (Score: {score}%, Type: {quiz.quiz_type})"
+    )
     db.add(activity)
     db.commit()
     
@@ -1068,11 +1130,14 @@ async def get_students(current_user: User = Depends(get_current_user), db: Sessi
         estimated_total_lessons = course_count * 15 if course_count > 0 else 1
         progress = min(100, round((completed_lessons / estimated_total_lessons) * 100)) if course_count > 0 else 0
         
-        # 3. Attendance & Grades (Mocked with consistency using ID seed)
-        # This ensures the same student always has the same "random" stats until real data is there
-        random.seed(student.id)
+        # 3. Attendance & Grades
         attendance = random.randint(70, 100)
-        avg_grade = random.randint(65, 98) + (random.random() * 2) # e.g. 85.5
+        avg_score = db.query(func.avg(QuizSubmission.score)).filter(QuizSubmission.student_id == student.id).scalar()
+        if avg_score is not None:
+            avg_grade = float(avg_score)
+        else:
+            random.seed(student.id)
+            avg_grade = float(random.randint(65, 95))
         
         result.append({
             "id": student.id,
@@ -1104,11 +1169,27 @@ async def get_student_detail(student_id: int, current_user: User = Depends(get_c
         if course:
             course_lessons = db.query(Lesson).filter(Lesson.course_id == course.id).all()
             
-            # --- Grade Logic (Fallback) ---
-            random.seed(str(student_id) + str(course.id))
-            base_score = 85 if (student_id % 2 == 0) else 60
-            variation = random.randint(-10, 10)
-            avg_grade = max(0, min(100, base_score + variation))
+            # --- Grade Logic (Actual average score from quiz_submissions) ---
+            lesson_ids = [l.id for l in course_lessons]
+            avg_grade = None
+            if lesson_ids:
+                from models import Quiz
+                # Find quizzes in this course
+                quizzes = db.query(Quiz).filter(Quiz.lesson_id.in_(lesson_ids)).all()
+                quiz_ids = [q.id for q in quizzes]
+                if quiz_ids:
+                    avg_grade_val = db.query(func.avg(QuizSubmission.score)).filter(
+                        QuizSubmission.student_id == student_id,
+                        QuizSubmission.quiz_id.in_(quiz_ids)
+                    ).scalar()
+                    if avg_grade_val is not None:
+                        avg_grade = int(avg_grade_val)
+            
+            if avg_grade is None:
+                random.seed(str(student_id) + str(course.id))
+                base_score = 85 if (student_id % 2 == 0) else 60
+                variation = random.randint(-10, 10)
+                avg_grade = max(0, min(100, base_score + variation))
             
             # --- Time Logic (Per Lesson) ---
             course_total_time = 0
@@ -1134,24 +1215,34 @@ async def get_student_detail(student_id: int, current_user: User = Depends(get_c
                 "lessons": lessons_breakdown
             })
     
-    # Get performance data over time from activities
+    # Get performance data over time from quiz submissions
     performance_data = []
-    activities = db.query(Activity).filter(
-        Activity.user_id == student_id,
-        Activity.activity_type.in_(["quiz_submitted", "lesson_completed"])
-    ).order_by(Activity.created_at).limit(20).all()
+    submissions = db.query(QuizSubmission).filter(
+        QuizSubmission.student_id == student_id
+    ).order_by(QuizSubmission.submitted_at).limit(20).all()
     
-    for activity in activities:
-        if "Score:" in activity.description:
-            # Extract score from description like "Submitted quiz: Lesson 1 (Score: 85%)"
-            try:
-                score = int(activity.description.split("Score: ")[1].split("%")[0])
-                performance_data.append({
-                    "date": activity.created_at.strftime("%Y-%m-%d"),
-                    "score": score
-                })
-            except:
-                pass
+    for sub in submissions:
+        performance_data.append({
+            "date": sub.submitted_at.strftime("%Y-%m-%d"),
+            "score": int(sub.score)
+        })
+        
+    # Fallback to activity description parsing if no submissions exist
+    if not performance_data:
+        activities = db.query(Activity).filter(
+            Activity.user_id == student_id,
+            Activity.activity_type.in_(["quiz_submitted"])
+        ).order_by(Activity.created_at).limit(20).all()
+        for activity in activities:
+            if "Score:" in activity.description:
+                try:
+                    score = int(activity.description.split("Score: ")[1].split("%")[0])
+                    performance_data.append({
+                        "date": activity.created_at.strftime("%Y-%m-%d"),
+                        "score": score
+                    })
+                except:
+                    pass
     
     # If no real performance data, generate mock data for demo
     if not performance_data:

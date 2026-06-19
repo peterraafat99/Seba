@@ -85,17 +85,21 @@ class Lesson(Base):
     content_ar = Column(Text, nullable=True)  # Arabic content
     
     course = relationship("Course", back_populates="lessons")
-    quiz = relationship("Quiz", back_populates="lesson", uselist=False, cascade="all, delete-orphan")
+    quizzes = relationship("Quiz", back_populates="lesson", cascade="all, delete-orphan")
 
 
 class Quiz(Base):
     __tablename__ = "quizzes"
 
     id = Column(Integer, primary_key=True, index=True)
-    lesson_id = Column(Integer, ForeignKey("lessons.id"), nullable=False, unique=True)
+    lesson_id = Column(Integer, ForeignKey("lessons.id"), nullable=False)
+    quiz_type = Column(String, default="platform")  # 'platform' | 'teacher' | 'generated'
+    student_id = Column(Integer, ForeignKey("users.id"), nullable=True)  # for generated quizzes
+    title = Column(String, nullable=True)
+    difficulty = Column(String, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     
-    lesson = relationship("Lesson", back_populates="quiz")
+    lesson = relationship("Lesson", back_populates="quizzes")
     questions = relationship("QuizQuestion", back_populates="quiz", cascade="all, delete-orphan")
 
 
@@ -207,11 +211,13 @@ class AttendanceRecord(Base):
     id = Column(Integer, primary_key=True, index=True)
     student_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     classroom_id = Column(Integer, ForeignKey("physical_classrooms.id"), nullable=False)
+    session_id = Column(Integer, ForeignKey("cv_sessions.id"), nullable=True)
     timestamp = Column(DateTime(timezone=True), server_default=func.now())
     status = Column(String, default="present")  # 'present', 'late', 'absent'
 
     student = relationship("User")
     classroom = relationship("PhysicalClassroom")
+    session = relationship("CVSession")
 
 
 # =============================================================================
@@ -472,4 +478,20 @@ class ClassroomMessage(Base):
     classroom = relationship("PhysicalClassroom")
     sender = relationship("User", foreign_keys=[sender_id])
     student = relationship("User", foreign_keys=[student_id])
+
+
+class QuizSubmission(Base):
+    __tablename__ = "quiz_submissions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    student_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    quiz_id = Column(Integer, ForeignKey("quizzes.id"), nullable=False)
+    score = Column(Float, nullable=False)
+    correct_answers = Column(Integer, nullable=False)
+    total_questions = Column(Integer, nullable=False)
+    submitted_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    student = relationship("User")
+    quiz = relationship("Quiz")
+
 

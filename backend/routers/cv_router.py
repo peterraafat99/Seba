@@ -221,6 +221,34 @@ async def stop_cv_session(
     """
     active = session_manager.get(classroom_id)
     if not active:
+        # Self-healing: check if there's any active CVSession in the database that wasn't closed
+        open_session = db.query(CVSession).filter(
+            CVSession.classroom_id == classroom_id,
+            CVSession.ended_at == None
+        ).order_by(CVSession.started_at.desc()).first()
+        
+        if open_session:
+            logger.info(f"[CVRouter] Closing orphaned session {open_session.id} in DB.")
+            open_session.ended_at = datetime.now(timezone.utc)
+            open_session.summary_json = json.dumps({
+                "total_events": 0,
+                "distracted_events": 0,
+                "exam_flag_events": 0,
+                "unique_students_flagged": 0,
+                "duration_seconds": 0,
+                "message": "Session orphaned and closed on stop request."
+            })
+            db.commit()
+            
+            # Stop WebSocket broadcaster
+            ws_broadcaster.remove_manager(classroom_id)
+            
+            return {
+                "status": "stopped",
+                "session_id": open_session.id,
+                "classroom_id": classroom_id,
+            }
+            
         raise HTTPException(404, f"No active CV session for classroom {classroom_id}.")
 
     # Signal worker to stop

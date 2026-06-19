@@ -59,6 +59,7 @@ interface QuizQuestion {
   correctAnswer: number;
 }
 interface QuizData {
+  id?: number;
   title?: string;
   difficulty?: string;
   questions: QuizQuestion[];
@@ -202,6 +203,7 @@ export const Lesson = () => {
       const backendQuiz = response.data;
 
       const formattedQuiz: QuizData = {
+        id: backendQuiz.id,
         title: backendQuiz.title,
         difficulty: backendQuiz.difficulty,
         questions: backendQuiz.questions.map((q: any) => ({
@@ -478,8 +480,8 @@ export const Lesson = () => {
     setQuizSubmitted(true);
 
     try {
-      // FIXED: Always submit quiz results with calculated score
-      await api.submitQuiz(id!, quizAnswers, calculatedScore);
+      // FIXED: Always submit quiz results with calculated score and quiz ID
+      await api.submitQuiz(id!, quizAnswers, calculatedScore, activeQuiz.id);
     } catch (err) {
       console.log("Background sync failed, but user saw score so it's fine.");
     }
@@ -917,6 +919,7 @@ export const Lesson = () => {
                                 // Load the data into the Quiz Tab and switch tabs
                                 const backendQuiz = message.data;
                                 const formattedQuiz: QuizData = {
+                                  id: backendQuiz.id,
                                   title: backendQuiz.title,
                                   difficulty: backendQuiz.difficulty,
                                   questions: backendQuiz.questions.map((q: any) => ({

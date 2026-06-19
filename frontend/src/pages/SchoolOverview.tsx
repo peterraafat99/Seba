@@ -77,7 +77,23 @@ export function SchoolOverview() {
 
   const handleStartSession = async (classroomId: number) => {
     try {
-      await api.startCvSession(classroomId, 'class', '0');
+      const room = classrooms.find(r => r.id === classroomId);
+      const cameraSource = room?.camera_source || '0';
+      const sessionType = room?.is_exam_room ? 'exam' : 'class';
+      
+      let nfcOnly = false;
+      if (room?.exam_config_json) {
+        try {
+          const parsed = typeof room.exam_config_json === 'string'
+            ? JSON.parse(room.exam_config_json)
+            : room.exam_config_json;
+          nfcOnly = !!parsed.nfc_only;
+        } catch (e) {
+          console.error("Failed to parse exam_config_json:", e);
+        }
+      }
+
+      await api.startCvSession(classroomId, sessionType, cameraSource, undefined, undefined, undefined, nfcOnly);
       navigate(`/school/classroom/${classroomId}/live`);
     } catch (error) {
       console.error("Failed to start session:", error);

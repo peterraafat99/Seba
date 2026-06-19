@@ -96,6 +96,7 @@ class CVWorker:
         self._stop_event = threading.Event()
         self._thread: Optional[threading.Thread] = None
         self._cap: Optional[cv2.VideoCapture] = None
+        self._nfc_listener = None
 
         # Pipeline components (initialized in _setup)
         self._detector: Optional[FaceDetectorEmbedder] = None
@@ -111,6 +112,15 @@ class CVWorker:
     def start(self) -> None:
         """Spin up the background processing thread."""
         self._stop_event.clear()
+        
+        # Start NFC Listener for this session
+        try:
+            from cv_analytics.nfc_listener import NFCSerialListener
+            self._nfc_listener = NFCSerialListener(classroom_id=self.classroom_id, session_id=self.session_id)
+            self._nfc_listener.start()
+        except Exception as e:
+            logger.error(f"[CVWorker] Failed to start NFC listener: {e}")
+
         self._thread = threading.Thread(
             target=self._run,
             name=f"cv-worker-classroom-{self.classroom_id}",
@@ -127,6 +137,13 @@ class CVWorker:
         logger.info(f"[CVWorker] Stop requested for classroom {self.classroom_id}.")
         self._stop_event.set()
         
+        # Stop NFC Listener
+        if self._nfc_listener:
+            try:
+                self._nfc_listener.stop()
+            except Exception as e:
+                logger.error(f"[CVWorker] Error stopping NFC listener: {e}")
+
         # Release the capture device from the main thread to unblock the read() call
         if hasattr(self, "_cap") and self._cap:
             try:
@@ -197,21 +214,19 @@ class CVWorker:
     # ------------------------------------------------------------------
 
     def _get_nfc_present_student_ids(self) -> set:
-        """Fetch IDs of students who scanned present via NFC in this classroom today."""
+        """Fetch IDs of students who scanned present via NFC in this classroom for the active session."""
         from database import SessionLocal
         from models import AttendanceRecord
-        from datetime import datetime, time
         
         present_ids = set()
         db = SessionLocal()
         try:
-            today_start = datetime.combine(datetime.today(), time.min)
             records = (
                 db.query(AttendanceRecord)
                 .filter(
                     AttendanceRecord.classroom_id == self.classroom_id,
                     AttendanceRecord.status == "present",
-                    AttendanceRecord.timestamp >= today_start
+                    AttendanceRecord.session_id == self.session_id
                 )
                 .all()
             )

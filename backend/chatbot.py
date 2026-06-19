@@ -12,7 +12,7 @@ from models import Lesson, StudentSentiment, TeacherNote, User, Enrollment, Acti
 from nlp_engine import analyze_sentiment, extract_learning_insight
 from vector_store import KnowledgeBase
 # IMPORT THE QUIZ ENGINE
-from quiz_engine import generate_personalized_quiz
+from quiz_engine import generate_personalized_quiz, is_quiz_request
 
 # --- Configuration ---
 load_dotenv()
@@ -210,18 +210,30 @@ async def inject_real_images_async(text: str):
         return text
 
 # --- BACKGROUND TASK: SAVE MEMORY ---
-async def save_memory_background(user_id: int, user_message: str, translated_text: str, emotion: str, db: Session, model_backend: str = None):
+async def save_memory_background(user_id: int, user_message: str, translated_text: str, emotion: str, model_backend: str = None):
+    from database import SessionLocal
+    db = SessionLocal()
+    
+    # 1. Save Sentiment in a separate transaction block
     try:
-        # 1. Save Sentiment
-        db.add(StudentSentiment(
+        sentiment_rec = StudentSentiment(
             student_id=user_id,
             original_message=user_message,
             translated_message=translated_text,
             sentiment_label=emotion,
             confidence_score=0.9
-        ))
+        )
+        db.add(sentiment_rec)
+        db.commit()
+        # Safe ASCII print to avoid Windows terminal crashes
+        safe_orig = user_message.encode('ascii', errors='replace').decode('ascii')
+        print(f"[DB] Saved StudentSentiment to DB: '{safe_orig}' -> label={emotion}")
+    except Exception as e:
+        db.rollback()
+        print(f"[DB] Failed to save StudentSentiment: {e}")
         
-        # 2. Extract & Save Hybrid Memory
+    # 2. Extract & Save Hybrid Memory (wrapped in its own block so it doesn't affect sentiment if it fails)
+    try:
         insight = await extract_learning_insight(user_message, translated_text, model_backend=model_backend)
         if insight:
             import json
@@ -239,12 +251,12 @@ async def save_memory_background(user_id: int, user_message: str, translated_tex
                             pass
                     current_profile.update(profile_updates)
                     student.persona_profile = json.dumps(current_profile)
-                    print(f"👤 Persona Profile Updated: {profile_updates}")
+                    print(f"[DB] Persona Profile Updated: {profile_updates}")
 
             # --- B. Save Situational Note ---
             situational_note = insight.get("situational_note")
             if situational_note and isinstance(situational_note, str) and len(situational_note) > 2:
-                print(f"📝 Background Note Saved: {situational_note}")
+                print(f"[DB] Background Note Saved: {situational_note}")
                 
                 from vector_store import get_embedding_model, EMBEDDING_BACKEND, get_gemini_embeddings
                 
@@ -257,7 +269,7 @@ async def save_memory_background(user_id: int, user_message: str, translated_tex
                         emb = model.encode([situational_note], normalize_embeddings=True).astype('float32')[0].tolist()
                     embedding_json = json.dumps(emb)
                 except Exception as e:
-                    print(f"⚠️ Failed to generate embedding for note: {e}")
+                    print(f"[DB] Failed to generate embedding for note: {e}")
 
                 # Check for existing similar note
                 import numpy as np
@@ -273,7 +285,7 @@ async def save_memory_background(user_id: int, user_message: str, translated_tex
                                 if sim > 0.85: # High similarity threshold
                                     en.weight += 0.5 # Increase weight
                                     is_duplicate = True
-                                    print(f"🔄 Similar note found! Increased weight of: {en.note_content}")
+                                    print(f"[DB] Similar note found! Increased weight of: {en.note_content.encode('ascii', errors='replace').decode('ascii')}")
                                     break
                             except:
                                 pass
@@ -286,9 +298,12 @@ async def save_memory_background(user_id: int, user_message: str, translated_tex
                         weight=insight.get("weight", 1.0),
                         embedding=embedding_json
                     ))
-        db.commit()
+            db.commit()
     except Exception as e:
-        print(f"⚠️ Background Memory Error: {e}")
+        db.rollback()
+        print(f"[DB] Background Memory Insight Error: {e}")
+    finally:
+        db.close()
 
 # --- Main Chat Logic ---
 async def get_ai_response(user_message: str, lesson_id: int, user_id: int, db: Session, image_b64: str = None, model_backend: str = None):
@@ -324,8 +339,18 @@ async def get_ai_response(user_message: str, lesson_id: int, user_id: int, db: S
             return f"Hi {student_name}! 👋 Ready to explore **{lesson_title}**? Ask me anything about the topics covered here, or type 'quiz me' if you want to test your understanding!"
 
     # --- 1. INTENT DETECTION: QUIZ (Preserved) ---
-    if "quiz" in clean_msg or "test me" in clean_msg:
-        print(f"🎯 Quiz Intent Detected for Lesson ID: {lesson_id}")
+    if is_quiz_request(user_message):
+        print(f"[CHAT] Quiz Intent Detected for Lesson ID: {lesson_id}")
+        try:
+            sentiment_result = await analyze_sentiment(user_message, model_backend=effective_backend)
+            emotion = sentiment_result.get("top_emotion", "neutral")
+            translated_text = sentiment_result.get("translated_text", user_message)
+            
+            # Save using background helper
+            await save_memory_background(user_id, user_message, translated_text, emotion, effective_backend)
+        except Exception as e:
+            print(f"[CHAT] Failed to analyze/save quiz request sentiment in chatbot: {e}")
+
         quiz_data = await generate_personalized_quiz(user_id, db, lesson_id, model_backend=effective_backend)
         
         if quiz_data.get("error"):
@@ -348,7 +373,8 @@ async def get_ai_response(user_message: str, lesson_id: int, user_id: int, db: S
     current_lesson_content = sys_lesson.content or "No content available for this lesson."
     current_course_id = sys_lesson.course_id
 
-    print(f"🚀 Processing message for lesson: {current_lesson_title}")
+    safe_title = current_lesson_title.encode('ascii', errors='replace').decode('ascii')
+    print(f"[CHAT] Processing message for lesson: {safe_title}")
 
     # Step 3.1: Sentiment / Translation (uses whichever LLM backend is active)
     try:
@@ -368,12 +394,12 @@ async def get_ai_response(user_message: str, lesson_id: int, user_id: int, db: S
             # Run in executor to prevent blocking the async loop
             rag_docs = await asyncio.to_thread(kb_instance.search, user_message, current_course_id, 3)
         except Exception as e:
-            print(f"⚠️ RAG Pipeline Warning: {e}")
+            print(f"[CHAT] RAG Pipeline Warning: {e}")
             rag_docs = []
     else:
         rag_docs = []
         
-    print(f"✅ Processing Complete. Emotion: {emotion}, RAG Docs: {len(rag_docs)}")
+    print(f"[CHAT] Processing Complete. Emotion: {emotion}, RAG Docs: {len(rag_docs)}")
 
     # --- 5. CONTEXT PREP (CURRENT LESSON + LIBRARY) ---
     # Retrieve Student Info
@@ -536,19 +562,19 @@ If the image is unclear, describe what you can see and ask the student to clarif
         unload_local_models()
 
     llm = get_llm_client(force_backend=effective_backend)
-    print(f"🤖 Generating response via {llm.backend_name()} ...")
+    print(f"[CHAT] Generating response via {llm.backend_name()} ...")
     try:
         response_text = await llm.generate(prompt=user_prompt, system_instruction=system_prompt, image_b64=image_b64)
     except RuntimeError as e:
         # Ollama offline or model not loaded — give a helpful error
-        print(f"❌ LLM error: {e}")
+        print(f"[CHAT] LLM error: {e}")
         return f"⚠️ **AI Service Unavailable**: {e}"
 
     # --- 8. ASYNC INTERCEPTOR — inject real images (unchanged) ---
     final_text = await inject_real_images_async(response_text)
 
     # --- 4. BACKGROUND MEMORY (Run at the very end to prevent memory overlap during LLM load) ---
-    asyncio.create_task(save_memory_background(user_id, user_message, translated_text, emotion, db, effective_backend))
+    asyncio.create_task(save_memory_background(user_id, user_message, translated_text, emotion, effective_backend))
 
     return final_text
 

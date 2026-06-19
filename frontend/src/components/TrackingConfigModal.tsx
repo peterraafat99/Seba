@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { X, Sliders, Brain, Eye, Clock, AlertTriangle, Shield } from 'lucide-react';
+import { X, Sliders, Brain, Eye, Clock, AlertTriangle, Shield, Camera } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { api } from '@/utils/api';
 
@@ -11,6 +11,8 @@ interface TrackingConfig {
   neighbor_yaw_threshold: number;
   rapid_change_count: number;
   rapid_change_window_sec: number;
+  camera_source: string;
+  nfc_only: boolean;
 }
 
 const DEFAULT_CONFIG: TrackingConfig = {
@@ -21,6 +23,8 @@ const DEFAULT_CONFIG: TrackingConfig = {
   neighbor_yaw_threshold: 25,
   rapid_change_count: 3,
   rapid_change_window_sec: 5,
+  camera_source: '0',
+  nfc_only: false,
 };
 
 interface Props {
@@ -36,17 +40,28 @@ export function TrackingConfigModal({ isOpen, onClose, classroom, onSaved }: Pro
   const [saved, setSaved] = useState(false);
 
   useEffect(() => {
-    if (classroom?.exam_config_json) {
+    if (classroom) {
       try {
-        const parsed = typeof classroom.exam_config_json === 'string'
-          ? JSON.parse(classroom.exam_config_json)
-          : classroom.exam_config_json;
-        setConfig({ ...DEFAULT_CONFIG, ...parsed, is_exam_room: classroom.is_exam_room ?? false });
+        const parsed = classroom.exam_config_json
+          ? (typeof classroom.exam_config_json === 'string'
+              ? JSON.parse(classroom.exam_config_json)
+              : classroom.exam_config_json)
+          : {};
+        setConfig({
+          ...DEFAULT_CONFIG,
+          ...parsed,
+          is_exam_room: classroom.is_exam_room ?? false,
+          camera_source: classroom.camera_source ?? '0',
+          nfc_only: parsed.nfc_only ?? false,
+        });
       } catch {
-        setConfig({ ...DEFAULT_CONFIG, is_exam_room: classroom?.is_exam_room ?? false });
+        setConfig({
+          ...DEFAULT_CONFIG,
+          is_exam_room: classroom?.is_exam_room ?? false,
+          camera_source: classroom?.camera_source ?? '0',
+          nfc_only: false,
+        });
       }
-    } else {
-      setConfig({ ...DEFAULT_CONFIG, is_exam_room: classroom?.is_exam_room ?? false });
     }
   }, [classroom]);
 
@@ -69,7 +84,7 @@ export function TrackingConfigModal({ isOpen, onClose, classroom, onSaved }: Pro
     }
   };
 
-  const updateField = (field: keyof TrackingConfig, value: number | boolean) => {
+  const updateField = (field: keyof TrackingConfig, value: number | boolean | string) => {
     setConfig(prev => ({ ...prev, [field]: value }));
   };
 
@@ -122,6 +137,52 @@ export function TrackingConfigModal({ isOpen, onClose, classroom, onSaved }: Pro
               >
                 <span className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform ${config.is_exam_room ? 'translate-x-6' : ''}`} />
               </button>
+            </div>
+
+            {/* Camera Source Selector */}
+            <div className="space-y-2 p-4 bg-gray-50 dark:bg-gray-700/20 rounded-xl border border-gray-200 dark:border-gray-750">
+              <label className="text-sm font-semibold text-gray-900 dark:text-white flex items-center gap-2">
+                <Camera className="w-4 h-4 text-indigo-500" /> Camera Device / Source
+              </label>
+              <select
+                value={config.camera_source}
+                onChange={e => updateField('camera_source', e.target.value)}
+                className="w-full p-2.5 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-750 text-gray-900 dark:text-white text-sm focus:border-indigo-500 focus:outline-none"
+              >
+                <option value="0" className="text-gray-950 dark:text-gray-100 bg-white dark:bg-gray-800">Camera 0 (Built-in Webcam / External 1)</option>
+                <option value="1" className="text-gray-955 dark:text-gray-100 bg-white dark:bg-gray-800">Camera 1 (NVIDIA Broadcast / Second Camera)</option>
+                <option value="2" className="text-gray-955 dark:text-gray-100 bg-white dark:bg-gray-800">Camera 2 (External USB Webcam)</option>
+                <option value="3" className="text-gray-955 dark:text-gray-100 bg-white dark:bg-gray-800">Camera 3</option>
+                {config.camera_source && !['0', '1', '2', '3'].includes(config.camera_source) && (
+                  <option value={config.camera_source} className="text-gray-955 dark:text-gray-100 bg-white dark:bg-gray-800">{config.camera_source} (Custom/RTSP Link)</option>
+                )}
+              </select>
+              <p className="text-[11px] text-gray-400 mt-1">Select the webcam index (0, 1, 2) that the background CV pipeline will monitor.</p>
+            </div>
+
+            {/* Proctoring Mode Selector */}
+            <div className="space-y-3 p-4 bg-gray-50 dark:bg-gray-700/20 rounded-xl border border-gray-200 dark:border-gray-750">
+              <label className="text-sm font-semibold text-gray-900 dark:text-white flex items-center gap-2">
+                <Sliders className="w-4 h-4 text-indigo-500" /> Proctoring Mode
+              </label>
+              <div className="grid grid-cols-2 gap-3">
+                <button
+                  type="button"
+                  onClick={() => updateField('nfc_only', true)}
+                  className={`p-3 rounded-xl border-2 text-left transition-all ${config.nfc_only ? 'border-indigo-600 bg-blue-50/20 dark:bg-indigo-900/10' : 'border-gray-200 dark:border-gray-700 hover:border-gray-300 bg-white dark:bg-gray-800'}`}
+                >
+                  <span className="block font-bold text-xs text-gray-900 dark:text-white">Mode 1: NFC Scoped</span>
+                  <span className="block text-[10px] text-gray-500 dark:text-gray-400 mt-0.5">Only track checked-in students.</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => updateField('nfc_only', false)}
+                  className={`p-3 rounded-xl border-2 text-left transition-all ${!config.nfc_only ? 'border-indigo-600 bg-blue-50/20 dark:bg-indigo-900/10' : 'border-gray-200 dark:border-gray-700 hover:border-gray-300 bg-white dark:bg-gray-800'}`}
+                >
+                  <span className="block font-bold text-xs text-gray-900 dark:text-white">Mode 2: Normal Roster</span>
+                  <span className="block text-[10px] text-gray-500 dark:text-gray-400 mt-0.5">Track all enrolled students.</span>
+                </button>
+              </div>
             </div>
 
             {/* Focus Thresholds */}

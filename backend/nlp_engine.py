@@ -1,31 +1,48 @@
 import os
 import re
 import asyncio
-from transformers import pipeline, AutoTokenizer, AutoModelForSequenceClassification
 from dotenv import load_dotenv
 from llm_client import get_llm_client
 
 load_dotenv()
 
-# --- 1. EAGER LOADING — Local Emotion Model ---
-print("[NLP] Initializing Local AI Engine... (This may take 10-20 seconds)")
+# --- 1. LAZY LOADING — Local Emotion Model ---
+LOCAL_EMOTION_PIPELINE = None
+LOCAL_EMOTION_INITIALIZED = False
 
-try:
-    model_name = "SamLowe/roberta-base-go_emotions"
-    tokenizer = AutoTokenizer.from_pretrained(model_name, local_files_only=True)
-    model = AutoModelForSequenceClassification.from_pretrained(model_name, local_files_only=True)
-    LOCAL_EMOTION_PIPELINE = pipeline(
-        "text-classification",
-        model=model,
-        tokenizer=tokenizer,
-        top_k=None,
-        device=-1
-    )
-    print("[NLP] Local Emotion Model Loaded Successfully into RAM.")
-
-except Exception as e:
-    print(f"[NLP] WARNING: Could not load Local Model. Ensure it is cached. {e}")
-    LOCAL_EMOTION_PIPELINE = None
+def get_emotion_pipeline():
+    global LOCAL_EMOTION_PIPELINE, LOCAL_EMOTION_INITIALIZED
+    if LOCAL_EMOTION_INITIALIZED:
+        return LOCAL_EMOTION_PIPELINE
+        
+    print("[NLP] Initializing Local AI Engine... (This may take 10-20 seconds)")
+    try:
+        model_name = "SamLowe/roberta-base-go_emotions"
+        from transformers import pipeline, AutoTokenizer, AutoModelForSequenceClassification
+        try:
+            tokenizer = AutoTokenizer.from_pretrained(model_name, local_files_only=True)
+            model = AutoModelForSequenceClassification.from_pretrained(model_name, local_files_only=True)
+            logger_msg = "[NLP] Local Emotion Model loaded from cache."
+        except Exception:
+            print(f"[NLP] Local cache not found for '{model_name}'. Downloading from Hugging Face Hub (this might take a minute)...")
+            tokenizer = AutoTokenizer.from_pretrained(model_name, local_files_only=False)
+            model = AutoModelForSequenceClassification.from_pretrained(model_name, local_files_only=False)
+            logger_msg = "[NLP] Local Emotion Model downloaded and cached."
+            
+        LOCAL_EMOTION_PIPELINE = pipeline(
+            "text-classification",
+            model=model,
+            tokenizer=tokenizer,
+            top_k=None,
+            device=-1
+        )
+        print(logger_msg)
+    except Exception as e:
+        print(f"[NLP] WARNING: Could not load Local Model. {e}")
+        LOCAL_EMOTION_PIPELINE = None
+        
+    LOCAL_EMOTION_INITIALIZED = True
+    return LOCAL_EMOTION_PIPELINE
 
 
 # --- HELPER FUNCTIONS ---
@@ -62,36 +79,60 @@ async def analyze_sentiment(message: str, model_backend: str = None):
     2. LLM (Ollama/Gemini, based on model_backend) -> Translates Egyptian Arabic to English.
     3. RoBERTa (Local) -> Analyzes Emotion on CPU (non-blocking thread).
     """
-    if not LOCAL_EMOTION_PIPELINE:
+    pipeline_instance = get_emotion_pipeline()
+    if not pipeline_instance:
         print("[NLP] Local model missing, returning neutral.")
         return {"top_emotion": "neutral", "top_3_emotions": [], "translated_text": message}
 
     try:
         # 2. LANGUAGE GATEKEEPER
         if contains_arabic(message):
-            print(f"[NLP] Arabic detected: '{message}' -> Translating via LLM ({model_backend or 'default'})...")
-            llm = get_llm_client(force_backend=model_backend)
+            safe_msg = message.encode('ascii', errors='replace').decode('ascii')
+            print(f"[NLP] Arabic detected: '{safe_msg}' -> Translating via LLM ({model_backend or 'default'})...")
+            
             prompt = create_translation_prompt(message)
-            translated_text = await llm.generate(prompt)
-            # Strip any preamble the model might add
-            translated_text = translated_text.strip().split("\n")[0].strip()
-            print(f"[NLP] Translated: {translated_text}")
+            translated_text = None
+            
+            # Try primary backend
+            try:
+                llm = get_llm_client(force_backend=model_backend)
+                translated_text = await llm.generate(prompt)
+            except Exception as primary_error:
+                print(f"[NLP] Primary LLM backend failed: {primary_error}")
+                # Fallback to alternative backend
+                current_default_backend = (model_backend or os.getenv("LLM_BACKEND", "ollama")).lower()
+                fallback_backend = "gemini" if current_default_backend == "ollama" else "ollama"
+                print(f"[NLP] Attempting fallback translation via: {fallback_backend}...")
+                try:
+                    llm = get_llm_client(force_backend=fallback_backend)
+                    translated_text = await llm.generate(prompt)
+                except Exception as fallback_error:
+                    print(f"[NLP] Fallback LLM backend also failed: {fallback_error}")
+            
+            if translated_text:
+                # Strip any preamble the model might add
+                translated_text = translated_text.strip().split("\n")[0].strip()
+                safe_trans = translated_text.encode('ascii', errors='replace').decode('ascii')
+                print(f"[NLP] Translated: {safe_trans}")
+            else:
+                print("[NLP] All translation backends failed. Using raw message.")
+                translated_text = message
         else:
             translated_text = message
 
         # 3. Local RoBERTa emotion analysis (non-blocking)
         def run_local_inference(text):
-            return LOCAL_EMOTION_PIPELINE(text)[0]
+            return pipeline_instance(text)[0]
 
         emotion_scores_list = await asyncio.to_thread(run_local_inference, translated_text)
 
         # 4. Process Results
         scores = {item['label']: round(item['score'], 4) for item in emotion_scores_list}
-        top_emotion = max(scores, key=scores.get)
+        top_go_emotion = max(scores, key=scores.get)
         sorted_emotions = sorted(scores.items(), key=lambda item: item[1], reverse=True)[:3]
 
         return {
-            "top_emotion": top_emotion,
+            "top_emotion": top_go_emotion,
             "top_3_emotions": sorted_emotions,
             "translated_text": translated_text
         }

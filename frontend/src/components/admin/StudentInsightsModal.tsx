@@ -534,29 +534,34 @@ export const StudentInsightsModal = ({ studentDetail, isLoading, onClose }: Stud
                                     </span>
                                 </h3>
                                 <div className="space-y-3 max-h-80 overflow-y-auto pr-2 custom-scrollbar">
-                                    {studentDetail.studentSentiments.map((sentiment) => (
-                                        <div
-                                            key={sentiment.id}
-                                            className={`p-4 rounded-lg border-l-4 ${sentiment.sentiment_label === 'positive' ? 'bg-green-50 dark:bg-green-900/20 border-green-500' :
-                                                sentiment.sentiment_label === 'negative' ? 'bg-red-50 dark:bg-red-900/20 border-red-500' :
-                                                    'bg-gray-50 dark:bg-gray-700/20 border-gray-400'
-                                                }`}
-                                        >
-                                            <p className="text-sm text-gray-700 dark:text-gray-300 mb-2 italic">
-                                                "{sentiment.message}"
-                                            </p>
-                                            <div className="flex items-center gap-3 text-xs text-gray-600 dark:text-gray-400">
-                                                <span className={`px-2 py-0.5 rounded font-semibold ${sentiment.sentiment_label === 'positive' ? 'bg-green-100 text-green-700' :
-                                                    sentiment.sentiment_label === 'negative' ? 'bg-red-100 text-red-700' :
-                                                        'bg-gray-100 text-gray-700'
-                                                    }`}>
-                                                    {sentiment.sentiment_label}
-                                                </span>
-                                                <span>Confidence: {Math.round(sentiment.confidence * 100)}%</span>
-                                                <span>{new Date(sentiment.timestamp).toLocaleDateString()}</span>
+                                    {studentDetail.studentSentiments.map((sentiment) => {
+                                        const labelLower = (sentiment.sentiment_label || '').toLowerCase();
+                                        const isPos = ["admiration", "amusement", "approval", "caring", "desire", "excitement", "gratitude", "joy", "love", "optimism", "pride", "relief", "positive"].includes(labelLower);
+                                        const isNeg = ["anger", "annoyance", "disappointment", "disapproval", "disgust", "embarrassment", "fear", "grief", "nervousness", "remorse", "sadness", "negative"].includes(labelLower);
+                                        return (
+                                            <div
+                                                key={sentiment.id}
+                                                className={`p-4 rounded-lg border-l-4 ${isPos ? 'bg-green-50 dark:bg-green-900/20 border-green-500' :
+                                                    isNeg ? 'bg-red-50 dark:bg-red-900/20 border-red-500' :
+                                                        'bg-gray-50 dark:bg-gray-700/20 border-gray-400'
+                                                    }`}
+                                            >
+                                                <p className="text-sm text-gray-700 dark:text-gray-300 mb-2 italic">
+                                                    "{sentiment.message}"
+                                                </p>
+                                                <div className="flex items-center gap-3 text-xs text-gray-600 dark:text-gray-400">
+                                                    <span className={`px-2 py-0.5 rounded font-semibold ${isPos ? 'bg-green-100 text-green-700' :
+                                                        isNeg ? 'bg-red-100 text-red-700' :
+                                                            'bg-gray-100 text-gray-700'
+                                                        }`}>
+                                                        {sentiment.sentiment_label}
+                                                    </span>
+                                                    <span>Confidence: {Math.round(sentiment.confidence * 100)}%</span>
+                                                    <span>{new Date(sentiment.timestamp).toLocaleDateString()}</span>
+                                                </div>
                                             </div>
-                                        </div>
-                                    ))}
+                                        );
+                                    })}
                                 </div>
                             </Card>
                         )}

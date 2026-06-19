@@ -1,234 +1,211 @@
-# Seba: School Management & Real-time Classroom Analytics System
+# Seba: School Management, Online Learning & Real-time Classroom Analytics System
 
-Seba is a comprehensive, modern **School Management System** designed for the Egyptian National Curriculum. The Online Learning Platform is one subsystem of this ecosystem, which integrates administrative tools, student engagement portals, and a state-of-the-art **Computer Vision (CV) Real-time Proctoring and Focus Analytics engine**.
-
----
-
-## 🏛️ System Roles & Dashboard Hierarchies
-
-Seba is built on a strict role-based access control (RBAC) model. The system provides custom dashboards tailored to each stakeholder in the educational lifecycle:
-
-### 1. 👑 Super Admin (Platform Owner)
-* Platform-wide dashboard to manage multiple schools, subscriptions, and system health.
-* Oversees school creation, platform licensing, and global database migrations.
-
-### 2. 🏫 School Manager (School Principal / Admin)
-* **School & Grade Management:** Creates grades (e.g., "Grade 8"), schedules academic years, and defines physical classrooms.
-* **Classroom Setup:** Configures camera sources (RTSP stream URLs or USB webcam indices) for physical classrooms.
-* **Roster Management:** Registers students, links them to classrooms, and manages teacher assignments.
-* **Timetable Scheduler:** Creates the physical class schedules (days, periods, start/end times, and subjects).
-* **Face Enrollment Auditor:** Reviews student face profiles enrolled via the system.
-
-### 3. 👩‍🏫 Teacher (Classroom & Lesson Auditor)
-* **Real-time Session Controls:** Starts/stops CV monitoring sessions for a classroom.
-* **Live Analytics Visualizer:** Monitors live student engagement rates and focus overlays via WebSockets.
-* **Behavior & Proctoring Reports:** Receives alerts for distracted states, cheating signals (during exam sessions), and unknown faces in the room.
-* **Student Analytics:** Evaluates student profile trends, platform progress, chatbot query sentiments, and custom learning notes.
-* **Manual Feedback:** Adds pedagogical comments or custom notes on student profiles.
-
-### 4. 🎓 Student (Online Learning & Tutoring Portal)
-* **Lesson Player:** Accesses bilingual lessons (Arabic/English) with course progress tracking.
-* **Seba AI Study Assistant:** Interactive chatbot tutoring right inside the lessons.
-* **Personalized Quizzes:** Takes math quizzes auto-generated to match their unique learning speed and weakness areas.
-* **Voice & Vision:** Ask questions via microphone (STT) or uploads pictures of handwritten math problems.
-
-### 5. 👪 Parent (Engagement Auditor)
-* Monitors student platform completion rates and quiz scores.
-* Reviews real-time physical classroom engagement charts (average focus rate, historical distraction events).
+Seba is a modern, bilingual (Arabic/English) **School Management & Learning Platform** tailored to the Egyptian National Curriculum. It integrates online learning portals with an advanced **Computer Vision (CV) Real-time Proctoring and Focus Analytics engine** and an **NFC Attendance System**.
 
 ---
 
-## 📹 The Computer Vision (CV) Monitoring Suite
-
-Seba monitors physical classrooms through a real-time video processing pipeline built on top of modern deep learning frameworks:
+## 🏛️ System Architecture Overview
 
 ```
-                  [Camera Stream]
-                         │
-                         ▼
-        ┌────────────────────────────────┐
-        │     Face Detector Backend      │
-        │  (Configured in config.py)     │
-        └──────────────┬─────────────────┘
-                       │
-             ┌─────────┴─────────┐
-             ▼                   ▼
-     [RetinaFace DEFAULT]   [YOLOv11 OPTIONAL] (yolov11n-face.pt)
-     (InsightFace det_10g)       │
-             │                   │
-             ▼                   ▼
-       ┌───────────────────────────────┐
-       │   InsightFace Recognition     │  (Anchor Frames only)
-       │  (ArcFace w600k_r50 Vector)   │ ──► Matches 512-dim FAISS index
-       └──────────────┬────────────────┘
-                      │
-                      ▼
-       ┌───────────────────────────────┐
-       │ Supervision ByteTrack Tracker │ ──► Maintains locked Student ID
-       └──────────────┬────────────────┘
-                      │
-                      ▼
-       ┌───────────────────────────────┐
-       │      Head Pose Estimator      │ ──► 2D Landmark Ratios (Stable)
-       └──────────────┬────────────────┘
-                      │
-                      ▼
-       ┌───────────────────────────────┐
-       │   Focus State Machine (FSM)   │ ──► Focus/Distraction/Cheating Signals
-       └──────────────┬────────────────┘
-                      │
-                      ▼
-       ┌───────────────────────────────┐
-       │     WebSocket Broadcaster     │ ──► Live React Canvas Overlay
-       └───────────────────────────────┘
+                          ┌────────────────────────────────┐
+                          │         React Frontend         │
+                          │   (TailwindCSS + TypeScript)   │
+                          └──────────────┬─────────────────┘
+                                         │
+                             HTTP Rest   │   WebSockets
+                             & JWT Auth  │   (Real-time CV Overlay)
+                                         ▼
+                          ┌────────────────────────────────┐
+                          │       FastAPI Web Server       │
+                          │   (models.py, main.py, RBAC)   │
+                          └──────────────┬─────────────────┘
+                                         │
+                 ┌───────────────────────┼──────────────────────┐
+                 ▼                       ▼                      ▼
+  ┌─────────────────────────────┐ ┌─────────────┐ ┌───────────────────────────┐
+  │   Computer Vision Engine    │ │ SQLite DB   │ │   AI Chatbot/RAG Engine   │
+  │ (RetinaFace, ArcFace, FSM)  │ │ (SQLAlchemy)│ │  (Ollama/Qwen OR Gemini)  │
+  └──────────────┬──────────────┘ └─────────────┘ └──────────────┬────────────┘
+                 │                                               │
+                 ▼                                               ▼
+     [Camera RTSP/Webcam Feed]                      [Egypt Math Curriculum PDFs]
 ```
 
-### Core Components
-* **Face Profile Enrollment:** Generates 512-dimensional ArcFace embeddings from student photos and stores them as base64-encoded strings in the SQLite database.
-* **Supervision ByteTrack Tracker:** Maps active bounding boxes dynamically to prevent ID switching or recognition lag on intermediate frames.
-* **Head Pose Estimator:** Replaced heavy gaze networks with an optimized **2D Landmark Ratio Method** mapping distances between 5 keypoints (eyes, nose, mouth corners) to approximate Pitch, Yaw, and Roll. This provides 100% stable, jitter-free results without 180° rotation flips or mathematical ambiguities.
-* **Focus Finite State Machine (FSM):**
-  * **Classroom Mode:** Calculates continuous distraction. If a student is distracted (pitch/yaw out of bounds) for **>10 seconds**, a `distracted` event is logged and streamed.
-  * **Exam Proctoring Mode:** Activates stricter rules:
-    * **Distraction Timer:** Reduced to **2 seconds**.
-    * **Neighbor Glance:** Triggers a `neighbor_glance` flag if the student looks laterally toward an adjacent desk for more than a brief second.
-    * **Rapid Scan:** Tracks direction reversals. If a student shifts head direction (Left-Right-Left) **>3 times inside a 5-second window**, a `rapid_scan` cheating flag is logged.
+Seba consists of:
+1. **FastAPI Web Server:** Handles business logic, RBAC, timetables, grading, homework submissions, and student notes.
+2. **Computer Vision Suite:** Interacts via WebSockets to broadcast processed video frames containing bounding box overlays, head pose indicators, focus rates, and cheating alerts.
+3. **AI Chatbot & RAG Engine:** Provides interactive lesson tutoring, voice queries, image OCR for math questions, and mood-adaptive quizzes.
+4. **SQLite Database:** Stores student details, grades, attendance logs, and school configurations.
 
 ---
 
-## ⚙️ Model Toggling: Local Offline vs. Cloud API
+## 👥 Roles & Access Controls
 
-Seba is designed to work in hardware-constrained environments (e.g., 16 GB RAM laptops). You can switch between a **100% offline local setup** and a **zero-local-RAM cloud setup** simply by toggling environment variables.
-
-### 🔌 How to Switch Backends in `.env`
-
-Open [`backend/.env`](file:///d:/grad%203/Seba%20AI%20tutor/Seba%20AI%20tutor/backend/.env) to configure your preference:
-
-#### Option A: 100% Local Offline Mode (GPU + CPU)
-* **LLM Engine:** Local Qwen 3.5 9B running on your GPU via Ollama.
-* **Embeddings & Reranker:** BGE-M3 and Cross-Encoder running locally on your CPU.
-* **Pros:** 100% private, free, works without internet.
-* **Cons:** High CPU/GPU load. Requires model downloads.
-* **Configuration:**
-  ```env
-  LLM_BACKEND=ollama
-  OLLAMA_MODEL=qwen3.5:9b
-  OLLAMA_HOST=http://localhost:11434
-  EMBEDDING_BACKEND=local
-  EMBEDDING_MODEL=./bge_m3_local
-  CACHE_LOCAL_MODELS=false
-  ```
-
-#### Option B: Cloud API Mode (0 MB Local RAM / VRAM)
-* **LLM Engine:** Gemini 2.5 Flash API on Google Cloud.
-* **Embeddings:** Gemini Embedding API (`models/gemini-embedding-001`).
-* **Pros:** Instant response, zero load on your CPU/GPU, leaves 100% of RAM free for other applications.
-* **Cons:** Requires internet access and API keys.
-* **Configuration:**
-  ```env
-  LLM_BACKEND=gemini
-  CLOUD_MODEL=gemini-2.5-flash
-  EMBEDDING_BACKEND=gemini
-  GEMINI_API_KEY=your_google_ai_studio_api_key
-  ```
+- **👑 Super Admin:** Performs global system maintenance, manages multiple schools, and oversees database migrations.
+- **🏫 School Manager:** Sets up grades, schedules classes, enrolls physical rooms, registers students/teachers, and seeds face profiles.
+- **👩‍🏫 Teacher:** Manages live CV sessions, monitors student attention metrics, reviews cheating logs, and adds student notes.
+- **🎓 Student:** Interacts with lessons, queries the Seba AI chatbot, takes personalized quizzes, and uploads homework.
+- **👪 Parent:** Monitors the student's curriculum completion progress, grades, and classroom focus rates.
 
 ---
 
-## 🧠 Local Memory Optimization Scheme (For 16GB Laptops)
+## 🗄️ Comprehensive Database Schema
 
-When running **Option A (Local Offline)** on 16GB laptops, system memory bottlenecks can cause Ollama to crash when loading a 9B model. We solved this with a **sequential lifecycle cleanup scheme** inside [chatbot.py](file:///d:/grad%203/Seba%20AI%20tutor/Seba%20AI%20tutor/backend/chatbot.py):
+Seba maps the following relational tables inside `learning_platform.db` using SQLAlchemy:
 
-1. **Step-by-Step Execution:** We do not run the RAG search, emotion classification, and LLM calls in parallel. 
-2. **Device Isolation:** Local BGE-M3 and emotion classifiers are forced onto `device="cpu"` to keep your GPU VRAM 100% free for Ollama.
-3. **RAM Eviction (`unload_local_models`):** 
-   Right before the backend sends the prompt to Ollama, it frees the references to local BGE-M3, the CrossEncoder, and the emotion pipeline, and calls `gc.collect()` and `torch.cuda.empty_cache()`. 
-   This releases **3+ GB of system RAM**, giving Ollama the contiguous memory space it needs to launch the 9B model on the GPU.
-4. **Caching Switch (`CACHE_LOCAL_MODELS`):**
-   * If you have a **32 GB RAM laptop** (like your friend's), set `CACHE_LOCAL_MODELS=true`. The system will skip unloading, keeping all models in RAM for instant, lag-free consecutive responses.
-   * If you have a **16 GB RAM laptop**, keep `CACHE_LOCAL_MODELS=false` to protect your system from allocation crashes.
+### 1. User Management Tables
+* **`users`:** Holds user profiles, passwords, and school mappings.
+  - `id` (INTEGER, PK)
+  - `name` (TEXT, Not Null)
+  - `email` (TEXT, Unique, Not Null)
+  - `hashed_password` (TEXT, Not Null)
+  - `role` (TEXT, Not Null) — `'admin' | 'school_manager' | 'teacher' | 'student' | 'parent'`
+  - `school_id` (INTEGER, FK -> schools.id)
+  - `is_deleted` (BOOLEAN, Default False)
+* **`parent_student`:** Many-to-Many join table linking parents to children.
+* **`teacher_student`:** Many-to-Many join table linking teachers to students.
+
+### 2. School Structure Tables
+* **`schools`:** School identifiers.
+  - `id` (INTEGER, PK), `name` (TEXT), `address` (TEXT), `logo_url` (TEXT)
+* **`grades`:** Academic levels.
+  - `id` (INTEGER, PK), `school_id` (FK), `name` (TEXT), `academic_year` (TEXT)
+* **`physical_classrooms`:** Physical school rooms monitored by cameras.
+  - `id` (INTEGER, PK), `grade_id` (FK), `name` (TEXT), `room_number` (TEXT), `capacity` (INTEGER)
+  - `camera_source` (TEXT) — Camera index or RTSP link.
+  - `is_exam_room` (BOOLEAN) — Active exam strict mode.
+  - `exam_config_json` (TEXT) — Thresholds for pitch, yaw, and scanning.
+* **`classroom_students`:** Roster tracking students in a physical classroom.
+* **`classroom_teachers`:** Links teachers, their subjects, and physical classrooms.
+* **`class_schedule`:** Weekly timetable slots.
+  - `id`, `classroom_id` (FK), `teacher_id` (FK), `subject` (TEXT), `day_of_week` (INTEGER), `period_start` (TEXT), `period_end` (TEXT)
+
+### 3. Curriculum & Student Performance Tables
+* **`courses`:** Course catalogs (e.g. Algebra).
+  - `id`, `title`, `description`, `subject`, `grade_level`
+* **`lessons`:** Structured units within a course.
+  - `id`, `course_id` (FK), `title`, `content_en` (TEXT), `content_ar` (TEXT)
+* **`enrollments`:** Records courses students are enrolled in and completion progress.
+* **`lesson_progress`:** Tracks time spent (seconds) and completion status per student per lesson.
+* **`quizzes`:** Platform, teacher, or AI-generated quizzes.
+  - `id` (INTEGER, PK), `lesson_id` (FK), `quiz_type` (TEXT) — `'platform' | 'teacher' | 'generated'`, `student_id` (FK), `title`, `difficulty`
+* **`quiz_questions`:** Multiple-choice quiz questions.
+  - `id`, `quiz_id` (FK), `question` (TEXT), `option_a`, `option_b`, `option_c`, `option_d`, `correct_answer` (0-3)
+* **`quiz_answers`:** Student selections for individual questions.
+  - `id`, `student_id` (FK), `quiz_id` (FK), `question_id` (FK), `answer` (INTEGER), `is_correct` (BOOLEAN)
+* **`quiz_submissions`:** Structured overall scores.
+  - `id` (INTEGER, PK), `student_id` (FK), `quiz_id` (FK), `score` (REAL), `correct_answers` (INTEGER), `total_questions` (INTEGER), `submitted_at` (DATETIME)
+* **`activities`:** General system log.
+  - `id`, `user_id` (FK), `activity_type` (TEXT), `entity_type` (TEXT), `entity_id` (INTEGER), `description` (TEXT)
+
+### 4. Computer Vision & Attendance Tables
+* **`student_face_profiles`:** Stores 512-dimensional ArcFace vector encodings.
+  - `student_id` (INTEGER, FK, Unique), `embedding` (TEXT) — Base64 pickled vector, `photo_url` (TEXT)
+* **`cv_sessions`:** Logs active camera streams.
+  - `id` (INTEGER, PK), `classroom_id` (FK), `session_type` (TEXT) — `'class' | 'exam'`, `started_at`, `ended_at`, `summary_json` (TEXT)
+* **`focus_events`:** Distractions or proctoring alerts.
+  - `id`, `session_id` (FK), `student_id` (FK, Nullable), `event_type` (TEXT), `pitch` (REAL), `yaw` (REAL), `started_at`, `ended_at`, `duration_sec` (REAL)
+* **`classroom_messages`:** Timetable announcements or DMs between users.
 
 ---
 
-## 📥 Detailed Model Download & Directory Guide
+## 🔌 API Endpoints Reference
 
-To run the offline models, your team must download the weights files manually and place them in the correct directories:
+### 🔐 Authentication (`/api/auth`)
+- `POST /api/auth/register` — Registers a new user account.
+- `POST /api/auth/login` — Returns a JWT token.
+- `POST /api/auth/logout` — Invalidates the current session.
+- `GET /api/auth/me` — Fetches current user profile.
 
-### 1. BGE-M3 Local Embeddings (For Offline RAG)
-* **Source Repository:** Hugging Face [BAAI/bge-m3](https://huggingface.co/BAAI/bge-m3)
-* **Target Folder:** `backend/bge_m3_local/`
-* **Files to Download:**
-  Go to [BAAI/bge-m3 Files and Versions](https://huggingface.co/BAAI/bge-m3/tree/main) and download these files directly:
-  1. `pytorch_model.bin` (~2.27 GB)
-  2. `sentencepiece.bpe.model`
-  3. `tokenizer.json`
-  4. `config.json`
-  5. `config_sentence_transformers.json`
-  6. `modules.json`
-  7. `sentence_bert_config.json`
-  8. `special_tokens_map.json`
-  9. `tokenizer_config.json`
-  10. The folder `1_Pooling/` (which contains `config.json` inside it).
+### 🏫 School Management & Hierarchy (`/api/school`)
+- `POST /api/schools` — Creates a school profile.
+- `GET /api/schools` — Lists all registered schools.
+- `POST /api/schools/{school_id}/grades` — Creates an academic grade level.
+- `POST /api/schools/grades/{grade_id}/classrooms` — Creates a physical classroom.
+- `POST /api/schools/classrooms/{classroom_id}/students` — Binds students to a classroom.
+- `POST /api/schools/classrooms/{classroom_id}/teachers` — Binds teacher subject roles.
+- `POST /api/schools/classrooms/{classroom_id}/schedule` — Configures the timetable.
 
-### 2. InsightFace Models (Face Detection & Recognition)
-By default, InsightFace downloads these models automatically at first run. If your team is offline or behind a firewalled network, they must download them manually:
-* **Source Repository:** GitHub [DeepInsight Releases](https://github.com/deepinsight/insightface/releases)
-* **Target Folder:** `C:\Users\<Your-PC-Username>\.insightface\models\buffalo_l\`
-* **Files to Download:**
-  Download the model bundle: [buffalo_l.zip](https://github.com/deepinsight/insightface/releases/download/v0.7/buffalo_l.zip)
-  Extract the contents of the zip directly into the target folder so it contains:
-  1. `det_10g.onnx` (RetinaFace Detector)
-  2. `w600k_r50.onnx` (ArcFace Recognizer)
-  3. `1k3d68.onnx`
-  4. `2d106det.onnx`
-  5. `genderage.onnx`
+### 📚 Online Curriculum (`/api/courses` & `/api/lessons`)
+- `GET /api/courses` — Lists available courses.
+- `GET /api/courses/{course_id}` — Gets course detail.
+- `POST /api/courses/{course_id}/enroll` — Enrolls a student.
+- `GET /api/lessons/{lesson_id}` — Fetches lesson contents (bilingual).
+- `POST /api/lessons/{lesson_id}/track-time` — Records learning active time.
 
-### 3. YOLOv11 Face Weights (Optional Backend)
-* **Source Repository:** GitHub [akanametov/yolo-face](https://github.com/akanametov/yolo-face/releases)
-* **Target Folder:** `backend/`
-* **File to Download:** `yolov11n-face.pt` (or any compatible ONNX conversion like `yolov8n-face.onnx` placed in the backend directory).
+### 🤖 AI Tutoring, OCR, RAG & Quizzes
+- `POST /api/chat` — Core tutoring text chatbot (Egyptian curriculum RAG context).
+- `POST /api/active-learning/start` — Initializes interactive step-by-step math tutoring sessions.
+- `POST /api/chat/image` — Submits student equations/handwriting photos for OCR parsing and explanation.
+- `POST /api/chat/voice` — Handles spoken voice question query pipelines.
+- `POST /api/quiz/submit` — Submits quiz answers, returns score, and writes a structured `QuizSubmission` record.
+- `POST /api/quiz/generate` — Requests custom AI-generated quiz matching recent student emotion levels.
+
+### 📹 Computer Vision & Monitoring Session Controls
+- `POST /api/cv/session/start` — Initializes classroom stream tracking.
+- `POST /api/cv/session/stop` — Halts camera processing and compiles summary JSON logs.
+- `GET /api/cv/session/{session_id}/summary` — Queries physical attention statistics.
+- `POST /api/cv/faces/enroll` — Enrolls or updates a student face recognition profile.
+- `WS /api/cv/ws/{classroom_id}` — Live WebSocket broadcasting bounding box coords, head orientations, focus states, and student identities.
+
+### 💳 Attendance System (`/api/attendance`)
+- `POST /api/attendance/scan` — Logs NFC card scans from physical readers.
+- `POST /api/attendance/enroll_card` — Pairs an NFC tag UID with a student ID.
+- `GET /api/attendance/classroom/{classroom_id}/today` — Reports today's physical attendance list.
 
 ---
 
-## 🚀 Installation & Running
+## 📹 The Computer Vision Processing Pipeline
 
-### 1. Backend Setup & Ingestion
-1. Navigate to the backend folder:
+The CV tracking worker operates sequentially:
+1. **Frame Capture:** Grabs images from physical USB cameras or RTSP classroom IP cameras.
+2. **Face Detection:** Configurable backends running RetinaFace (via default InsightFace) or YOLOv11 Face model models to find bounding boxes.
+3. **Identity Verification:** On anchor frames, extracts the 512-dimensional ArcFace vector and query-matches it against the local student FAISS index.
+4. **Supervision ByteTrack:** Maintains track IDs on subsequent intermediate frames, avoiding heavy model recognition workloads.
+5. **Head Pose Estimation:** Map Pitch, Yaw, and Roll using a custom **2D Landmark Ratio Method**. It uses geometric ratios between 5 facial landmark keypoints:
+   - `pitch = (nose_y - eye_y_midpoint) / face_height`
+   - `yaw = (nose_x - left_eye_x) / (right_eye_x - left_eye_x)`
+   This approach provides 100% stable, ambiguity-free head pose indicators without heavy neural nets.
+6. **Focus State Machine (FSM):**
+   - **Classroom Mode:** Continuous distraction (head turned away) for **>10 seconds** writes a distraction event.
+   - **Exam Mode:** Continuous distraction for **>2 seconds** triggers warnings. Lateral yaw shifts are cataloged as `neighbor_glance`. Fast back-and-forth direction switches (Left-Right-Left) >3 times in 5 seconds log a `rapid_scan` cheating flag.
+
+---
+
+## 🧠 Memory Evictions for 16GB RAM Laptops
+
+To avoid memory exhaustion crashes when launching local models on consumer-grade devices:
+- **Device Isolation:** Enforces local BGE-M3 and emotional classifiers onto `cpu` devices to preserve GPU memory for Ollama.
+- **Eviction Lifecycle (`unload_local_models`):** Inside `chatbot.py`, references to local encoders and pipeline configurations are deleted, followed by manual `gc.collect()` and `torch.cuda.empty_cache()` calls. This evicts **3+ GB of RAM** prior to sending prompts to Ollama.
+- **Toggling (`CACHE_LOCAL_MODELS`):**
+  - Set `CACHE_LOCAL_MODELS=true` for 32GB setups (no unload delays).
+  - Set `CACHE_LOCAL_MODELS=false` for 16GB setups (safely unloads weights between prompts).
+
+---
+
+## 🔧 Installation & Setup
+
+1. **Python dependencies:**
    ```bash
    cd backend
-   ```
-2. Install Python packages:
-   ```bash
    pip install -r requirements.txt
    ```
-3. Place your math curriculum PDFs in `backend/curriculum_pdfs/Math/term_1/` and `term_2/`.
-4. Ingest and extract text from the PDFs:
+2. **Ingest PDFs & Build index:**
    ```bash
    python ingest_pdfs.py
+   python build_rag.py
    ```
-5. Build the vector database index (this script automatically creates `course_index.faiss` or `course_index_gemini.faiss` depending on your `.env` setting):
-   ```bash
-   $env:PYTHONIOENCODING="utf-8"; python build_rag.py
-   ```
-6. Populate the platform database tables with initial course schedules, sample users, and lessons:
+3. **Database initialization:**
    ```bash
    python init_db.py
    ```
-7. Launch the FastAPI server:
+4. **Start Web Server:**
    ```bash
    python main.py
    ```
-
-### 2. Frontend Setup
-1. Navigate to the frontend folder:
+5. **Start React/Vite development server:**
    ```bash
    cd ../frontend
-   ```
-2. Install Node dependencies:
-   ```bash
    npm install
-   ```
-3. Start the React/Vite development server:
-   ```bash
    npm run dev
    ```
-4. Access the portal in your browser at `http://localhost:5173`.
